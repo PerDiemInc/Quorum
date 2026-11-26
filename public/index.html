@@ -1,45 +1,325 @@
 <!doctype html>
 <html lang="en">
-<head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Quorum — Your AI team</title><link rel="stylesheet" href="/styles.css">
-<script type="module" src="/app.js"></script>
-</head>
-<body>
-<header><div class="brand"><span class="mark">Q</span><div><strong>Quorum</strong><small>Different minds. One goal.</small></div></div><span id="connection" class="muted">Connecting…</span></header>
-<main>
-<aside>
-<section class="panel"><h2>Your agents</h2><p class="muted">Create specialists with independent skills and models.</p><div id="agents"></div>
-<details><summary>Create an agent</summary><form id="agent-form">
-<label>Name<input name="name" maxlength="80" required placeholder="e.g. Architect"></label>
-<label>Instructions<textarea name="instructions" rows="3" placeholder="Role, expertise, personality"></textarea></label>
-<label>Provider<select name="provider" class="provider"></select></label>
-<label>Model<input name="model" placeholder="e.g. qwen3:8b"></label>
-<label>Voice<input name="voice" placeholder="e.g. af_heart"></label>
-<label>Skill files (SKILL.md)<input name="skills" type="file" accept=".md,.txt" multiple></label>
-<label>Extra skill instructions<textarea name="skillText" rows="3" placeholder="Optional skill"></textarea></label>
-<button type="submit">Create agent</button></form></details></section>
-<section class="panel"><h2>Meeting history</h2><div id="history"></div></section>
-</aside>
-<div class="workspace">
-<section class="panel" id="new-panel"><h1>Start a meeting</h1><p class="muted">Set an outcome and assemble your AI team.</p>
-<form id="meeting-form"><label>Meeting goal<textarea name="goal" maxlength="8000" required rows="3" placeholder="What do you want to achieve?"></textarea></label>
-<label>Agenda (optional)<textarea name="agenda" maxlength="8000" rows="2" placeholder="Topics to discuss"></textarea></label>
-<fieldset><legend>Invite agents</legend><div id="invite"></div></fieldset>
-<button type="submit">Create meeting</button></form></section>
-<section class="panel" id="meeting-panel" hidden>
-<div class="heading"><div><span class="eyebrow">MEETING ROOM</span><h1 id="goal"></h1><p id="agenda" class="muted"></p></div><span id="status" class="pill"></span></div>
-<div id="team" class="team"></div>
-<div class="controls"><label class="compact">Turns per run<input id="limit" type="number" value="12" min="1" max="60"></label><label class="check"><input id="voice-output" type="checkbox"> Speak replies</label>
-<button id="resume">Start / continue</button><button id="pause" class="secondary">Pause</button><button id="accept" class="secondary">Accept outcome</button><button id="new" class="secondary">New meeting</button></div>
-<p id="progress" class="muted" aria-live="polite"></p><p id="audio-note" class="muted" aria-live="polite"></p>
-<div id="transcript" role="log" aria-live="polite"></div>
-<form id="message-form"><label>Join the conversation<textarea name="message" maxlength="16000" rows="3" placeholder="Ask a question, challenge an idea, or give feedback"></textarea></label>
-<div class="controls"><button type="submit">Send feedback</button><button id="record" type="button" class="secondary">Record voice</button></div></form>
-<p class="muted small">Recording pauses discussion. Review the Whisper transcription, then send it as feedback. Continue when ready.</p>
-</section>
-<p id="error" role="alert" class="error"></p>
-</div>
-</main>
-<footer>Local-first • Model providers may send meeting context to their own services • Only the host can accept the outcome.</footer>
-</body></html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Quorum — Different minds. One orbit.</title>
+    <meta
+      name="description"
+      content="Assemble your AI dream team. A local-first space for ideas, debate, and decisions."
+    />
+    <link rel="stylesheet" href="/styles.css" />
+    <script type="module" src="/app.js"></script>
+  </head>
+  <body>
+    <header>
+      <div class="brand">
+        <span class="mark">Q</span>
+        <div>
+          <strong>Quorum</strong><small>Different minds. One goal.</small>
+        </div>
+      </div>
+      <nav aria-label="Workspace">
+        <button id="nav-meetings" class="nav-button selected" type="button">
+          Meeting room</button
+        ><button id="nav-agents" class="nav-button" type="button">Agents</button
+        ><button id="nav-settings" class="nav-button" type="button">
+          Settings <span aria-hidden="true">↗</span>
+        </button>
+      </nav>
+      <span id="connection" class="muted">Connecting…</span>
+    </header>
+    <div class="intro">
+      <div>
+        <span class="eyebrow">HUMAN INSTINCT. MACHINE PERSPECTIVE.</span>
+        <h1>
+          Big ideas need<br /><em>different minds.</em
+          ><span class="spark" aria-hidden="true">✳</span>
+        </h1>
+        <p>
+          Your own council of AI specialists. Bring a question.<br />Find the
+          friction. Make the call.
+        </p>
+      </div>
+      <div class="orbit-art" aria-hidden="true">
+        <div class="orbit one"></div>
+        <div class="orbit two"></div>
+        <div class="orbit three"></div>
+        <span class="planet core">q.</span
+        ><span class="planet satellite a">✳</span
+        ><span class="planet satellite b">✦</span
+        ><span class="orbital-label"
+          >INDEPENDENT MINDS<br />SHARED GRAVITY</span
+        >
+      </div>
+    </div>
+    <main>
+      <aside>
+        <section class="panel" id="agent-library">
+          <div class="section-label">01 / THE COLLECTIVE</div>
+          <h2>Your agents <span id="agent-count" class="count">0</span></h2>
+          <p class="muted">
+            Create specialists with independent skills and models.
+          </p>
+          <div id="agents"></div>
+          <details id="create-agent">
+            <summary>＋ Create an agent</summary>
+            <form id="agent-form">
+              <label
+                >Name<input
+                  name="name"
+                  maxlength="80"
+                  required
+                  placeholder="e.g. Architect"
+              /></label>
+              <label
+                >Instructions<textarea
+                  name="instructions"
+                  rows="3"
+                  placeholder="Role, expertise, personality"
+                ></textarea>
+              </label>
+              <label
+                >Provider<select name="provider" class="provider"></select
+              ></label>
+              <label
+                >Model<input name="model" placeholder="e.g. qwen3:8b"
+              /></label>
+              <label
+                >Voice<input name="voice" placeholder="e.g. af_heart"
+              /></label>
+              <label
+                >Skill files (SKILL.md)<input
+                  name="skills"
+                  type="file"
+                  accept=".md,.txt"
+                  multiple
+              /></label>
+              <label
+                >Extra skill instructions<textarea
+                  name="skillText"
+                  rows="3"
+                  placeholder="Optional skill"
+                ></textarea>
+              </label>
+              <button type="submit">Create agent</button>
+            </form>
+          </details>
+        </section>
+        <section class="panel">
+          <div class="section-label">THE ARCHIVE</div>
+          <h2>Meeting history</h2>
+          <div id="history"></div>
+        </section>
+      </aside>
+      <div class="workspace">
+        <section class="panel" id="new-panel">
+          <div class="section-label">
+            02 / THE LAUNCHPAD <span>YOUR NEXT BREAKTHROUGH STARTS HERE</span>
+          </div>
+          <h1>Put something<br />on the table<span class="acid">.</span></h1>
+          <p class="muted">
+            One goal. A few sharp minds. A whole new perspective.
+          </p>
+          <form id="meeting-form">
+            <fieldset class="room-choice">
+              <legend>How would you like to meet?</legend>
+              <label class="check"
+                ><input type="radio" name="mode" value="chat" checked /> Chat
+                <small>Think out loud in writing</small></label
+              ><label class="check"
+                ><input type="radio" name="mode" value="voice" /> Voice
+                <small>Speak, listen, stay in the room</small></label
+              >
+            </fieldset>
+            <label
+              >Meeting goal<textarea
+                name="goal"
+                maxlength="8000"
+                required
+                rows="3"
+                placeholder="e.g. How do we turn our first 100 users into our biggest fans?"
+              ></textarea>
+            </label>
+            <label
+              >Agenda (optional)<textarea
+                name="agenda"
+                maxlength="8000"
+                rows="2"
+                placeholder="Topics to discuss"
+              ></textarea>
+            </label>
+            <fieldset>
+              <legend>Invite agents</legend>
+              <div id="invite"></div>
+            </fieldset>
+            <button type="submit">
+              Assemble the room <span aria-hidden="true">↗</span>
+            </button>
+          </form>
+        </section>
+        <section class="panel" id="meeting-panel" hidden>
+          <div class="heading">
+            <div>
+              <span class="eyebrow">MEETING ROOM</span>
+              <h1 id="goal"></h1>
+              <p id="agenda" class="muted"></p>
+            </div>
+            <span id="status" class="pill"></span>
+          </div>
+          <div class="room-toolbar">
+            <div class="mode-switch" role="group" aria-label="Meeting mode">
+              <button
+                id="mode-chat"
+                type="button"
+                class="secondary"
+                aria-pressed="true"
+              >
+                Chat</button
+              ><button
+                id="mode-voice"
+                type="button"
+                class="secondary"
+                aria-pressed="false"
+              >
+                Voice
+              </button>
+            </div>
+            <p id="mode-note" class="muted small" role="status"></p>
+          </div>
+          <div id="voice-host" class="voice-host" hidden>
+            <span class="avatar">YOU</span><strong>You · host</strong
+            ><span id="mic-state" class="muted small">Microphone off</span>
+          </div>
+          <div id="team" class="team"></div>
+          <h2 id="transcript-heading">Conversation</h2>
+          <div class="controls">
+            <label class="compact"
+              >Turns per run<input
+                id="limit"
+                type="number"
+                value="12"
+                min="1"
+                max="60" /></label
+            ><label class="check"
+              ><input id="voice-output" type="checkbox" /> Speak replies</label
+            >
+            <button id="resume">Start / continue</button
+            ><button id="pause" class="secondary">Pause</button
+            ><button id="accept" class="secondary">Accept outcome</button
+            ><button id="new" class="secondary">New meeting</button>
+          </div>
+          <p id="progress" class="muted" aria-live="polite"></p>
+          <p id="audio-note" class="muted" aria-live="polite"></p>
+          <div id="transcript" role="log" aria-live="polite"></div>
+          <form id="message-form">
+            <label
+              >Join the conversation<textarea
+                name="message"
+                maxlength="16000"
+                rows="3"
+                placeholder="Ask a question, challenge an idea, or give feedback"
+              ></textarea>
+            </label>
+            <div class="controls">
+              <button type="submit">Send feedback</button
+              ><button id="record" type="button" class="secondary">
+                Record voice
+              </button>
+            </div>
+          </form>
+          <p class="muted small">
+            Recording pauses discussion. Review the Whisper transcription, then
+            send it as feedback. Continue when ready.
+          </p>
+        </section>
+        <section class="panel" id="agents-panel" hidden>
+          <div class="section-label">THE COLLECTIVE / AGENT LIBRARY</div>
+          <h1>Meet your minds<span class="acid">.</span></h1>
+          <p class="muted">
+            Independent skills. Distinct perspectives. Your team, your rules.
+          </p>
+          <button id="add-agent" type="button">＋ Create an agent</button
+          ><button id="undo-delete" class="secondary" type="button" hidden>
+            Restore last deleted agent
+          </button>
+          <button id="starter-team" class="secondary" type="button">
+            Add specialist team (10 roles)
+          </button>
+          <p id="starter-team-status" class="muted small" role="status"></p>
+          <div id="agent-directory" class="provider-grid"></div>
+        </section>
+        <section class="panel" id="settings-panel" hidden>
+          <div class="section-label">03 / ENGINE ROOM</div>
+          <div class="heading">
+            <div>
+              <h1>Models & connections<span class="acid">.</span></h1>
+              <p class="muted">
+                See what this Quorum server can actually reach.
+              </p>
+            </div>
+            <button id="refresh-models" class="secondary" type="button">
+              Refresh
+            </button>
+          </div>
+          <p class="notice">
+            Docker has its own environment. The optional authenticated Mac CLI
+            bridge connects to your existing Claude Code and Codex logins. These
+            CLIs normally use cloud inference; Ollama runs the model locally.
+          </p>
+          <div id="provider-status" class="provider-grid"></div>
+          <h2>Installed models</h2>
+          <div id="installed-models"></div>
+          <form id="install-model-form">
+            <label
+              >Install an Ollama model<input
+                name="model"
+                required
+                maxlength="150"
+                placeholder="qwen2.5:0.5b"
+                list="suggested-models" /></label
+            ><datalist id="suggested-models">
+              <option value="qwen2.5:0.5b"></option>
+              <option value="llama3.2:1b"></option>
+              <option value="qwen3:4b"></option>
+            </datalist>
+            <p class="muted small">
+              Downloads model files into your persistent Ollama volume. Larger
+              models can take several GB of storage.
+            </p>
+            <button type="submit">Download model ↓</button>
+          </form>
+          <p id="download-progress" role="status" aria-live="polite"></p>
+        </section>
+        <p id="error" role="alert" class="error"></p>
+      </div>
+    </main>
+    <dialog id="agent-dialog" aria-labelledby="agent-detail-name">
+      <div class="heading">
+        <div>
+          <span class="eyebrow">AGENT DOSSIER</span>
+          <h2 id="agent-detail-name"></h2>
+        </div>
+        <button
+          id="close-agent"
+          class="secondary"
+          type="button"
+          aria-label="Close agent details"
+        >
+          ✕
+        </button>
+      </div>
+      <div id="agent-detail"></div>
+      <button id="delete-agent" class="danger" type="button">
+        Delete agent
+      </button>
+      <p class="muted small">
+        Existing meetings retain their own copy of this agent.
+      </p>
+    </dialog>
+    <footer>
+      Local-first • Model providers may send meeting context to their own
+      services • Only the host can accept the outcome.
+    </footer>
+  </body>
+</html>

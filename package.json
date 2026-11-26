@@ -10,6 +10,10 @@
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
     "test": "node --test",
-    "check": "node --check src/server.js && node --check src/providers.js && node --check src/engine.js && node --check src/speech.js && node --check public/app.js"
+    "check": "node --check src/server.js && node --check src/providers.js && node --check src/engine.js && node --check src/speech.js && node --check public/app.js && node --check src/models.js && node --check src/agent-templates.js && node --check scripts/cli-bridge.js",
+    "check:host": "node scripts/check-host.js",
+    "smoke": "node scripts/smoke.js",
+    "bridge:setup": "node scripts/setup-cli-bridge.js",
+    "bridge": "node scripts/cli-bridge.js"
   }
 }

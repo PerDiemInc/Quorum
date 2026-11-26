@@ -1,0 +1,113 @@
+name: quorum
+services:
+  quorum:
+    build: .
+    init: true
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${QUORUM_PORT:-4710}:4710"
+    environment:
+      QUORUM_PUBLIC_PORT: ${QUORUM_PORT:-4710}
+      QUORUM_HOST_ACCESS: /host/access.json
+      QUORUM_CLI_BRIDGE_URL: ${QUORUM_CLI_BRIDGE_URL:-}
+      QUORUM_CLI_BRIDGE_TOKEN: ${QUORUM_CLI_BRIDGE_TOKEN:-}
+      OLLAMA_URL: http://ollama:11434
+      QUORUM_OPENAI_URL: http://inference:8080/v1
+      # Enable with WHISPER_URL=http://whisper:8000/v1 and --profile speech.
+      WHISPER_URL: ${WHISPER_URL:-}
+      WHISPER_REMOTE_MODEL: ${WHISPER_REMOTE_MODEL:-Systran/faster-whisper-tiny.en}
+    volumes:
+      - quorum-data:/data
+      - ./.quorum/host:/host:ro
+    read_only: true
+    tmpfs:
+      - /tmp:mode=1777,size=64m
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    depends_on:
+      ollama:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          CMD,
+          node,
+          -e,
+          "fetch('http://127.0.0.1:4710/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+  ollama:
+    image: ollama/ollama@sha256:20d1bbfbabe1c97ba4b16301f08a20d8484bcf77047742a3cb71c613d8e12d0b
+    restart: unless-stopped
+    volumes:
+      - ollama-models:/root/.ollama
+    healthcheck:
+      test: [CMD, ollama, list]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+  inference:
+    profiles: [hf]
+    build:
+      context: .
+      dockerfile: docker/inference.Dockerfile
+    restart: unless-stopped
+    command:
+      [
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8080",
+        "--hf-repo",
+        "${HF_MODEL_REPO:-Qwen/Qwen2.5-0.5B-Instruct-GGUF}",
+        "--hf-file",
+        "${HF_MODEL_FILE:-qwen2.5-0.5b-instruct-q4_k_m.gguf}",
+        "--alias",
+        "local-hf",
+        "--ctx-size",
+        "4096",
+      ]
+    environment:
+      LLAMA_CACHE: /models
+    volumes:
+      - hf-models:/models
+    healthcheck:
+      test: [CMD, curl, -fsS, http://127.0.0.1:8080/health]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 10m
+  whisper:
+    profiles: [speech]
+    build:
+      context: .
+      dockerfile: docker/whisper.Dockerfile
+    restart: unless-stopped
+    environment:
+      WHISPER__MODEL: ${WHISPER_REMOTE_MODEL:-Systran/faster-whisper-tiny.en}
+      WHISPER__INFERENCE_DEVICE: cpu
+      WHISPER__COMPUTE_TYPE: int8
+      ENABLE_UI: "false"
+      HF_HOME: /models
+    volumes:
+      - whisper-models:/models
+    healthcheck:
+      test:
+        [
+          CMD,
+          python,
+          -c,
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=4)",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+volumes:
+  quorum-data:
+  ollama-models:
+  hf-models:
+  whisper-models:
