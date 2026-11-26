@@ -4,6 +4,20 @@
 
 A standalone local-first meeting prototype. Create specialist agents with their own instructions, multiple Markdown skills and model configuration, invite them to a goal-oriented meeting, and let them discuss until you accept the outcome.
 
+## Screenshots
+
+**Meeting setup** with a goal, agent selection, and Chat or Voice mode.
+
+![Quorum meeting setup with three specialists selected](docs/screenshots/meeting-setup.jpg)
+
+**Saved voice meeting** showing the description, agenda, participants, and transcript.
+
+![Quorum voice meeting with saved context and example replies](docs/screenshots/saved-voice-meeting.jpg)
+
+**Agent library** with specialist roles and their model settings.
+
+![Quorum agent library with four specialist cards](docs/screenshots/agent-library.jpg)
+
 ## Docker quick start (recommended)
 
 Requirements: Docker Desktop with Compose; allow at least 6 GB RAM for the small default models. Larger models need more memory and disk. The app image includes Node 24; the Mac's Node version does not matter for Docker.
