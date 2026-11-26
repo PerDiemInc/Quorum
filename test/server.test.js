@@ -68,7 +68,19 @@ test("container binding retains host/origin protection and persists SQLite acros
     ).status,
     403,
   );
-  const state = { agents: [], meetings: [], initialized: true };
+  const state = {
+    agents: [],
+    meetings: [{
+      id: "archive-example",
+      goal: "Review the launch",
+      description: "The pilot starts next week.",
+      agenda: "Scope\nSuccess criteria",
+      participants: [{ id: "archived-agent", name: "Product Manager", provider: "demo", model: "" }],
+      transcript: [],
+      status: "paused",
+    }],
+    initialized: true,
+  };
   assert.equal(
     (
       await fetch(base + "/api/state", {

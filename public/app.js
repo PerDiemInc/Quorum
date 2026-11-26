@@ -17,9 +17,9 @@ const defaults = {
   demo: "",
   ollama: "qwen2.5:0.5b",
   "openai-compatible": "",
-  // Claude resolves its supported alias; Codex matches this workspace's configured model.
+  // Sonnet tracks Claude's latest everyday model. Sol balances response speed and quality.
   claude: "sonnet",
-  codex: "gpt-6-astra",
+  codex: "gpt-6.2-sol",
 };
 let state = { agents: [], meetings: [] },
   config = {},
@@ -124,6 +124,7 @@ function renderAgents() {
   }
   $("agent-count").textContent = String(state.agents.length);
   renderAgentDirectory();
+  updateInviteSelection();
   if (!state.agents.length) {
     list.append(node("p", "Create your first agent.", "muted"));
     invite.append(node("p", "No agents available.", "muted"));
@@ -131,6 +132,11 @@ function renderAgents() {
 }
 function renderHistory() {
   const list = $("history");
+  const query = $("history-search").value.trim().toLowerCase();
+  const meetings = state.meetings.filter((meeting) =>
+    [meeting.goal, meeting.description, meeting.agenda, ...meeting.participants.map((agent) => agent.name)]
+      .some((value) => value?.toLowerCase().includes(query)),
+  );
   list.replaceChildren();
   if (!state.meetings.length)
     list.append(
@@ -140,14 +146,34 @@ function renderHistory() {
         "empty-history",
       ),
     );
-  for (const m of [...state.meetings].reverse()) {
+  else if (!meetings.length)
+    list.append(node("p", "No meetings match your search.", "empty-history"));
+  for (const m of meetings.toReversed()) {
     const item = node("div", undefined, "history-item");
     item.append(
-      button(m.goal.slice(0, 75) + " · " + m.status, () => openMeeting(m)),
+      button(m.goal, () => openMeeting(m)),
+      node("p", [m.status, m.createdAt && new Date(m.createdAt).toLocaleDateString(), m.participants.map((agent) => agent.name).join(", ")].filter(Boolean).join(" · "), "muted small"),
     );
     list.append(item);
   }
+  updateInviteSelection();
 }
+$("history-search").addEventListener("input", renderHistory);
+
+function updateInviteSelection() {
+  const count = $("invite").querySelectorAll("input:checked").length;
+  $("selection-count").textContent = count ? count + " / 12 selected" : "Choose at least one agent";
+  $("meeting-form").querySelector('button[type="submit"]').disabled = count === 0 || count > 12;
+  const availableIds = new Set(state.agents.map((agent) => agent.id));
+  $("reuse-team").hidden = !state.meetings.at(-1)?.participants.some((agent) => availableIds.has(agent.id));
+}
+$("invite").addEventListener("change", updateInviteSelection);
+$("reuse-team").addEventListener("click", () => {
+  // Reuse library selections; each new meeting saves its own participant snapshots.
+  const ids = new Set((state.meetings.at(-1)?.participants ?? []).map((agent) => agent.id));
+  for (const input of $("invite").querySelectorAll("input")) input.checked = ids.has(input.value);
+  updateInviteSelection();
+});
 function renderTeam() {
   $("team").replaceChildren();
   if (!current) return;
@@ -241,7 +267,10 @@ function openMeeting(m) {
   document.body.classList.add("meeting-active");
   renderMode();
   $("goal").textContent = m.goal;
-  $("agenda").textContent = m.agenda || "No agenda specified";
+  $("meeting-description").textContent = m.description || "No description";
+  $("agenda").textContent = m.agenda || "No agenda";
+  $("meeting-agents").textContent = m.participants.map((agent) => agent.name).join(", ");
+  $("goal").focus();
   $("message-form").elements.message.value = "";
   error();
   renderTeam();
@@ -259,6 +288,7 @@ function newMeeting() {
   document.body.classList.remove("meeting-active");
   $("new-panel").hidden = false;
   $("meeting-panel").hidden = true;
+  $("meeting-form").elements.goal.focus();
   renderHistory();
   error();
 }
@@ -379,6 +409,7 @@ async function run() {
         ?.classList.add("active");
       const context = {
         goal: m.goal,
+        description: m.description,
         agenda: m.agenda,
         participants: m.participants.map((p) => ({ name: p.name })),
         transcript: m.transcript
@@ -483,6 +514,8 @@ $("meeting-form").addEventListener("submit", (e) => {
   const m = {
     id: crypto.randomUUID(),
     goal: String(d.get("goal")).trim(),
+    description: String(d.get("description")).trim(),
+    createdAt: new Date().toISOString(),
     agenda: String(d.get("agenda")).trim(),
     participants,
     transcript: [],
@@ -497,6 +530,7 @@ $("meeting-form").addEventListener("submit", (e) => {
   state.meetings.push(m);
   openMeeting(m);
   f.reset();
+  updateInviteSelection();
   void save();
 });
 $("message-form").addEventListener("submit", (e) => {

@@ -23,7 +23,8 @@ Create an agent using **Ollama (local)** and `qwen2.5:0.5b`, invite it to a meet
 
 ### Dashboard
 
-- **Meeting room:** set a goal and optional agenda, invite agents, run or pause turns, add feedback, and accept the outcome yourself.
+- **Meeting room:** set a goal, add an optional description and agenda, invite agents or reuse the last team, run or pause turns, add feedback, and accept the outcome yourself.
+- **Meeting history:** search by goal, description, agenda, or agent. Reopen a saved room to see its context, participant snapshots, and transcript.
 - **Agents:** create specialists, inspect instructions/skills/model/voice, delete from the library, or restore the most recently deleted agent. Existing meetings retain independent participant snapshots. Deleted agents are retained in SQLite for restoration.
 - **Settings:** list installed Ollama and compatible endpoint models, check provider access, and install an Ollama model by name. Downloads show progress and errors and survive page navigation. One download runs at a time. If the app restarts, run the pull again; Ollama reuses already downloaded layers. A healthy Ollama process does not imply that any model has been pulled.
 
@@ -159,6 +160,6 @@ docker compose up -d --build quorum
 
 The bridge binds to `127.0.0.1:4712` and permits only the existing Claude/Codex response adapters and capability checks. A random bearer token is stored in ignored `.quorum/bridge/token` and `.env` files with restrictive permissions. The token is available only to the server container, not browser responses. Docker Desktop reaches it through `host.docker.internal`; the models remain on the provider's cloud infrastructure. This is **local CLI access, not local ChatGPT/Claude weights or offline inference**.
 
-Settings performs live bridge authentication checks and enables both CLI providers. Selecting Claude preselects `sonnet`; selecting ChatGPT/Codex preselects `gpt-6-astra`. This applies to new agents and provider changes inside meetings. You can edit the model name, or clear it to use the authenticated CLI's default. No claim is made that every model is available on every subscription. Requests may count against your plan or incur provider charges. The bridge must remain running; stopping its terminal disconnects CLI access. No startup daemon is installed.
+Settings performs live bridge authentication checks and enables both CLI providers. Selecting Claude preselects `sonnet`; selecting ChatGPT/Codex preselects `gpt-6.2-sol`. This applies to new agents and provider changes inside meetings. You can edit the model name, or clear it to use the authenticated CLI's default. No claim is made that every model is available on every subscription. Requests may count against your plan or incur provider charges. The bridge must remain running; stopping its terminal disconnects CLI access. No startup daemon is installed.
 
 To disable it, stop the bridge, remove `QUORUM_CLI_BRIDGE_URL` and `QUORUM_CLI_BRIDGE_TOKEN` from `.env`, then recreate the app container. To rotate its token, stop the bridge, remove `.quorum/bridge/token`, rerun setup and restart both processes. Never commit or share `.env` or the token. Native CLI configuration may still affect execution; use only trusted role instructions. The bridge is not a general-purpose shell or a complete isolation boundary.

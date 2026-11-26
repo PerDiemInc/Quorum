@@ -1020,3 +1020,40 @@ dialog::backdrop {
     min-width: 100%;
   }
 }
+
+#new-panel .heading a {
+  color: var(--accent);
+  white-space: nowrap;
+}
+#meeting-history {
+  scroll-margin-top: 1rem;
+}
+#history {
+  max-height: 24rem;
+  overflow: auto;
+}
+.history-item button {
+  font-size: 0.875rem;
+  overflow-wrap: anywhere;
+}
+.history-item p {
+  margin: 0 0 0.5rem;
+}
+.setup-details label {
+  margin-top: 0.75rem;
+}
+.team-shortcut {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+.meeting-details dt {
+  font-weight: 600;
+}
+.meeting-details dd {
+  margin: 0 0 0.75rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

@@ -106,22 +106,41 @@
             </form>
           </details>
         </section>
-        <section class="panel">
-          <div class="section-label">THE ARCHIVE</div>
+        <section class="panel" id="meeting-history">
           <h2>Meeting history</h2>
+          <label>Search meetings<input id="history-search" type="search" placeholder="Goal, agenda, description, or agent" /></label>
           <div id="history"></div>
         </section>
       </aside>
       <div class="workspace">
         <section class="panel" id="new-panel">
-          <div class="section-label">
-            02 / THE LAUNCHPAD <span>YOUR NEXT BREAKTHROUGH STARTS HERE</span>
+          <div class="heading">
+            <h1>Start a meeting</h1>
+            <a href="#meeting-history">Meeting history</a>
           </div>
-          <h1>Put something<br />on the table<span class="acid">.</span></h1>
-          <p class="muted">
-            One goal. A few sharp minds. A whole new perspective.
-          </p>
           <form id="meeting-form">
+            <label
+              >Meeting goal<textarea
+                name="goal"
+                maxlength="8000"
+                required
+                rows="3"
+                placeholder="e.g. How do we turn our first 100 users into our biggest fans?"
+              ></textarea>
+            </label>
+            <details class="setup-details">
+              <summary>Add a description or agenda</summary>
+              <label>Meeting description<textarea name="description" maxlength="8000" rows="2" placeholder="Background the agents should know"></textarea></label>
+              <label>Agenda<textarea name="agenda" maxlength="8000" rows="2" placeholder="Topics to cover, in order"></textarea></label>
+            </details>
+            <fieldset>
+              <legend>Invite agents</legend>
+              <div class="team-shortcut">
+                <button type="button" class="secondary" id="reuse-team" hidden>Use last meeting’s team</button>
+                <span id="selection-count" class="muted small" aria-live="polite"></span>
+              </div>
+              <div id="invite"></div>
+            </fieldset>
             <fieldset class="room-choice">
               <legend>How would you like to meet?</legend>
               <label class="check"
@@ -132,29 +151,8 @@
                 <small>Speak, listen, stay in the room</small></label
               >
             </fieldset>
-            <label
-              >Meeting goal<textarea
-                name="goal"
-                maxlength="8000"
-                required
-                rows="3"
-                placeholder="e.g. How do we turn our first 100 users into our biggest fans?"
-              ></textarea>
-            </label>
-            <label
-              >Agenda (optional)<textarea
-                name="agenda"
-                maxlength="8000"
-                rows="2"
-                placeholder="Topics to discuss"
-              ></textarea>
-            </label>
-            <fieldset>
-              <legend>Invite agents</legend>
-              <div id="invite"></div>
-            </fieldset>
-            <button type="submit">
-              Assemble the room <span aria-hidden="true">↗</span>
+            <button type="submit" disabled>
+              Create meeting <span aria-hidden="true">↗</span>
             </button>
           </form>
         </section>
@@ -162,11 +160,19 @@
           <div class="heading">
             <div>
               <span class="eyebrow">MEETING ROOM</span>
-              <h1 id="goal"></h1>
-              <p id="agenda" class="muted"></p>
+              <h1 id="goal" tabindex="-1"></h1>
+
             </div>
             <span id="status" class="pill"></span>
           </div>
+          <details class="meeting-details" open>
+            <summary>Meeting details</summary>
+            <dl>
+              <dt>Description</dt><dd id="meeting-description"></dd>
+              <dt>Agenda</dt><dd id="agenda"></dd>
+              <dt>Agents</dt><dd id="meeting-agents"></dd>
+            </dl>
+          </details>
           <div class="room-toolbar">
             <div class="mode-switch" role="group" aria-label="Meeting mode">
               <button

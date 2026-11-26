@@ -25,6 +25,7 @@ export function canContinue(meeting, turns, limit) {
 export function makePrompt(agent, meeting) {
   const context = {
     goal: String(meeting.goal ?? '').slice(0, 8000),
+    description: String(meeting.description ?? '').slice(0, 8000),
     agenda: String(meeting.agenda ?? '').slice(0, 8000),
     participants: (meeting.participants ?? []).slice(0, 20).map(p => ({ name: String(p.name).slice(0, 80) })),
     transcript: (meeting.transcript ?? []).slice(-30).map(m => ({
