@@ -17,8 +17,9 @@ const defaults = {
   demo: "",
   ollama: "qwen2.5:0.5b",
   "openai-compatible": "",
-  claude: "",
-  codex: "",
+  // Claude resolves its supported alias; Codex matches this workspace's configured model.
+  claude: "sonnet",
+  codex: "gpt-6-astra",
 };
 let state = { agents: [], meetings: [] },
   config = {},
