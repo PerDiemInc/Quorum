@@ -8,19 +8,33 @@ A standalone local-first meeting prototype. Create specialist agents with their 
 
 These use a made-up demo meeting with real model replies.
 
-![A meeting about a reusable cup program with replies from four agents](docs/screenshots/meeting.webp)
+### The meeting room
 
-![Voice mode with a tile for each agent](docs/screenshots/voice.webp)
+![A meeting about a reusable cup program: the conversation beside the agents in the room](docs/screenshots/meeting.webp)
 
-![Importing agent profiles from a public GitHub repository](docs/screenshots/import.webp)
+| | |
+|---|---|
+| ![Starting a meeting with four product agents selected](docs/screenshots/setup.webp) | ![Agent suggestions that open after typing @ in the message box](docs/screenshots/mention.webp) |
+| **Invite the room.** Write a goal and filter agents by group. | **Tag with @.** Ask specific agents to answer. |
+| ![The window for adding another agent to a meeting](docs/screenshots/join.webp) | ![Voice mode with a tile for each agent](docs/screenshots/voice.webp) |
+| **Add or remove agents** while the discussion runs. | **Talk it out** in a voice room. |
 
-![The agent library filtered to one group](docs/screenshots/team.webp)
+### Agents and skills
 
-![Skills included with the project](docs/screenshots/library.webp)
+| | |
+|---|---|
+| ![The agent library filtered to one group](docs/screenshots/team.webp) | ![Importing agent profiles from a public GitHub repository](docs/screenshots/import.webp) |
+| **22 specialists** in four groups. | **Import from GitHub.** Preview, then add. |
+| ![The included skills list, searched for positioning](docs/screenshots/library.webp) | ![The meeting room in light mode](docs/screenshots/light.webp) |
+| **Included skills** you can add to any agent. | **Light mode**, when you want it. |
+
+### On a narrow screen
+
+<img src="docs/screenshots/phone.webp" alt="A meeting transcript on a phone-sized screen" width="300">
 
 ## Website
 
-[docs/index.html](docs/index.html) is a one-page site for Quorum with the screenshots above and the demo meeting as audio. Open the file in a browser, or serve the `docs` folder with GitHub Pages.
+[docs/index.html](docs/index.html) is a one-page site for Quorum. Scrolling drives its animation: the demo meeting passes from speaker to speaker, the app screens rise and change, and the demo plays as audio in each agent's voice. With reduced motion turned on it is a plain scrolling page. Open the file in a browser, or publish the `docs` folder with GitHub Pages.
 
 ## Docker quick start (recommended)
 
