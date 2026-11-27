@@ -1,22 +1,11 @@
 export const providers = ['demo', 'ollama', 'openai-compatible', 'claude', 'codex'];
 export const MAX_TURNS = 60;
-// The starter team uses qwen2.5:3b, and local-hf is the alias of the bundled llama.cpp service.
-export const defaultModels = {
-  demo: '',
-  ollama: 'qwen2.5:3b',
-  'openai-compatible': 'local-hf',
-  // Sonnet tracks Claude's latest everyday model. Sol balances response speed and quality.
-  claude: 'sonnet',
-  codex: 'gpt-6.2-sol',
-};
 export function normalizeAgent(input) {
   if (!input || typeof input !== 'object') throw new Error('Agent required');
   const name = String(input.name ?? '').trim();
   const provider = String(input.provider ?? '');
   if (!name || name.length > 80 || !providers.includes(provider)) throw new Error('Invalid agent name or provider');
-  let model = String(input.model ?? '').trim().slice(0, 200);
-  if (!model && ['claude', 'codex'].includes(provider)) model = defaultModels[provider];
-  if (['ollama', 'openai-compatible'].includes(provider) && !model) throw new Error('Choose a model name');
+  const model = String(input.model ?? '').trim().slice(0, 200);
   const skills = Array.isArray(input.skills) ? input.skills.slice(0, 16).map(s => ({
     name: String(s.name ?? 'Skill').slice(0, 200),
     text: String(s.text ?? '').slice(0, 12000),
@@ -28,6 +17,19 @@ export function normalizeAgent(input) {
 export function nextParticipant(participants, cursor) {
   if (!Array.isArray(participants) || !participants.length) throw new Error('Select at least one agent');
   return participants[((cursor % participants.length) + participants.length) % participants.length];
+}
+/** Drop one agent from a meeting without changing whose turn is next. */
+export function removeParticipant(meeting, id) {
+  const { participants } = meeting;
+  const index = participants.findIndex(p => p.id === id);
+  if (index < 0) return null;
+  if (participants.length === 1) throw new Error('A meeting needs at least one agent');
+  const count = participants.length;
+  let next = (((meeting.cursor ?? 0) % count) + count) % count;
+  if (index < next) next--;
+  const [removed] = participants.splice(index, 1);
+  meeting.cursor = next % participants.length;
+  return removed;
 }
 export function canContinue(meeting, turns, limit) {
   return meeting.status !== 'accepted' && turns < Math.min(MAX_TURNS, Math.max(1, limit));

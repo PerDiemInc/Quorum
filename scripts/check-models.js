@@ -1,6 +1,5 @@
 // Sends one short request to each model through a running Quorum server.
 // Nothing is saved. Claude and Codex requests may count against your plan.
-import { defaultModels } from "../src/engine.js";
 
 const base = process.env.QUORUM_URL ?? "http://127.0.0.1:4711";
 const get = async (path) => {
@@ -33,13 +32,12 @@ try {
   process.exit(1);
 }
 
-// Every model your agents and meetings use, plus each provider's default.
+// Every model your agents and meetings use, plus each provider's automatic choice.
 const models = new Map();
 const add = (provider, model, use) => {
   if (provider === "demo") return;
-  const name = model || defaultModels[provider];
-  const key = provider + " " + name;
-  const entry = models.get(key) ?? { provider, model: name, uses: new Set() };
+  const key = provider + " " + (model || "");
+  const entry = models.get(key) ?? { provider, model: model || "", uses: new Set() };
   entry.uses.add(use);
   models.set(key, entry);
 };
@@ -47,16 +45,18 @@ for (const agent of state.agents) add(agent.provider, agent.model, "agents");
 for (const meeting of state.meetings)
   for (const agent of meeting.participants)
     add(agent.provider, agent.model, "meetings");
-for (const [provider, model] of Object.entries(defaultModels))
+for (const provider of ["ollama", "openai-compatible", "claude", "codex"])
   if (config.cli || !["claude", "codex"].includes(provider))
-    add(provider, model, "default");
+    add(provider, "", "automatic");
 
 let failed = 0;
 async function check(label, request) {
   const started = Date.now();
   try {
-    await request();
-    console.log("OK    " + label + "  " + ((Date.now() - started) / 1000).toFixed(1) + "s");
+    const result = await request();
+    console.log(
+      "OK    " + label + (result?.model ? "  → " + result.model : "") + "  " + ((Date.now() - started) / 1000).toFixed(1) + "s",
+    );
   } catch (error) {
     failed++;
     console.log("FAIL  " + label + "\n      " + error.message.replace(/\n/g, "\n      "));
@@ -65,7 +65,7 @@ async function check(label, request) {
 console.log("Checking models through " + base + "\n");
 // One at a time: the server runs a single model turn at once.
 for (const { provider, model, uses } of models.values())
-  await check(provider + " / " + model + "  (" + [...uses].join(", ") + ")", () =>
+  await check(provider + " / " + (model || "auto") + "  (" + [...uses].join(", ") + ")", () =>
     post(
       "/api/turn",
       "application/json",

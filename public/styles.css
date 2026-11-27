@@ -245,6 +245,8 @@ details[open] > :not(summary) { margin-top: 14px; }
 .host .message-body { align-items: flex-end; }
 .host .bubble-line { flex-direction: row-reverse; }
 .host .bubble { border-radius: 18px 4px 18px 18px; background: var(--accent); color: var(--accent-foreground); }
+.notice-line { align-self: center; padding: 2px 12px; border-radius: 99px; background: var(--default); color: var(--muted); font-size: 12px; }
+.participant .remove-agent { --bg: transparent; --bg-hover: var(--danger-soft); --fg: var(--danger-text); min-height: 32px; font-size: 12px; }
 .activity { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; }
 .activity:has(#progress:empty) { display: none; }
 .spinner { display: none; width: 16px; height: 16px; border: 2px solid var(--accent-soft); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; }

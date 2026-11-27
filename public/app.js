@@ -3,7 +3,7 @@ import {
   nextParticipant,
   canContinue,
   normalizeAgent,
-  defaultModels,
+  removeParticipant,
   voices,
   hostVoice,
   assignVoices,
@@ -19,8 +19,6 @@ const names = {
   claude: "Claude Code CLI",
   codex: "ChatGPT / Codex CLI",
 };
-// Local entries are replaced with an installed model once the server reports them.
-const defaults = { ...defaultModels };
 // The provider new agents start on; chosen from what is actually connected.
 let preferredProvider = "demo";
 let state = { agents: [], meetings: [] },
@@ -28,7 +26,9 @@ let state = { agents: [], meetings: [] },
   current = null,
   running = null,
   revision = 0,
-  recording = null;
+  recording = null,
+  /** @type {{id: string, turn: AbortController} | null} */
+  speaker = null;
 let saveQueue = Promise.resolve();
 let stateVersion = 0;
 function error(message = "") {
@@ -65,6 +65,11 @@ function save() {
     })
     .catch((e) => error("Could not save: " + e.message));
   return saveQueue;
+}
+/** @param {{provider: string, model: string}} agent */
+function modelLabel({ provider, model }) {
+  if (provider === "demo") return names[provider];
+  return names[provider] + " · " + (model || "Auto model");
 }
 function node(tag, text, cls) {
   const el = document.createElement(tag);
@@ -119,9 +124,6 @@ function icon(path) {
   svg.append(shape);
   return svg;
 }
-const model = (agent) =>
-  names[agent.provider] + (agent.model ? " · " + agent.model : "");
-
 const voiceName = (id) =>
   voices.find(([voice]) => voice === id)?.[1] ?? id;
 /** Fill a voice list. Voices other agents hold are labeled, or disabled when asked. */
@@ -169,7 +171,7 @@ function renderAgents() {
   invite.replaceChildren();
   for (const a of state.agents) {
     const card = node("div", undefined, "agent"),
-      info = agentInfo(a, model(a));
+      info = agentInfo(a, modelLabel(a));
     info.append(
       node("small", a.skills.map((s) => s.name).join(", ") || "No skills"),
       button("View agent", () => viewAgent(a)),
@@ -182,7 +184,7 @@ function renderAgents() {
     input.name = "agent";
     input.value = a.id;
     input.checked = picked.has(a.id);
-    label.append(input, avatar(a.name), agentInfo(a, model(a)));
+    label.append(input, avatar(a.name), agentInfo(a, modelLabel(a)));
     invite.append(label);
   }
   $("agent-count").textContent = String(state.agents.length);
@@ -244,6 +246,7 @@ function renderTeam() {
   for (const a of current.participants) {
     const card = node("div", undefined, "participant");
     card.dataset.agent = a.id;
+    card.classList.toggle("active", speaker?.id === a.id);
     card.append(
       avatar(a.name),
       node("strong", a.name),
@@ -258,17 +261,17 @@ function renderTeam() {
     modelOptions(select, a.provider);
     select.setAttribute("aria-label", a.name + " provider");
     model.value = a.model;
-    model.placeholder = "Model name";
-    model.setAttribute("aria-label", a.name + " model");
+    model.placeholder = "Auto model";
+    model.disabled = a.provider === "demo";
+    model.setAttribute("aria-label", a.name + " model (blank for automatic)");
     select.addEventListener("change", () => {
       a.provider = select.value;
-      a.model = defaults[a.provider];
-      model.value = a.model;
+      a.model = model.value = "";
+      model.disabled = a.provider === "demo";
       void save();
     });
     model.addEventListener("change", () => {
-      a.model = model.value.trim() || defaults[a.provider];
-      model.value = a.model;
+      a.model = model.value.trim();
       void save();
     });
     const voice = node("select");
@@ -289,14 +292,45 @@ function renderTeam() {
       renderTeam();
       void save();
     });
-    card.append(select, model, voice);
+    const remove = button("Remove from call", () => removeFromCall(a.id));
+    remove.classList.add("remove-agent");
+    remove.setAttribute("aria-label", "Remove " + a.name + " from call");
+    card.append(select, model, voice, remove);
     $("team").append(card);
   }
+}
+function renderMeetingAgents() {
+  $("meeting-agents").textContent = current.participants
+    .map((agent) => agent.name)
+    .join(", ");
+}
+/** Take an agent out of the open meeting; the library and transcript are untouched. */
+function removeFromCall(id) {
+  if (!current || current.status === "accepted") return;
+  if (current.participants.length === 1) return;
+  const removed = removeParticipant(current, id);
+  if (!removed) return;
+  (current.removedParticipants ??= []).push(removed);
+  // Only the removed agent's turn is cancelled; the discussion keeps running.
+  if (speaker?.id === id) {
+    speaker.turn.abort();
+    speaker = null;
+  }
+  addMessage("Quorum", removed.name + " left the call.");
+  renderTeam();
+  renderMeetingAgents();
+  renderHistory();
+  renderStatus(removed.name + " was removed from the call.");
+  $("goal").focus({ preventScroll: true });
 }
 function renderTranscript() {
   $("transcript").replaceChildren();
   if (!current) return;
   for (const m of current.transcript) {
+    if (m.speaker === "Quorum" && !m.model) {
+      $("transcript").append(node("p", m.text, "notice-line"));
+      continue;
+    }
     const host = m.speaker === "Host",
       row = node("article", undefined, host ? "message host" : "message"),
       content = node("div", undefined, "message-body"),
@@ -403,6 +437,11 @@ function renderStatus(message = "") {
     Boolean(running) || Boolean(recording) || current.status === "accepted";
   $("pause").disabled = !running;
   $("accept").disabled = current.status === "accepted" || Boolean(recording);
+  for (const remove of $("team").querySelectorAll(".remove-agent")) {
+    const last = current.participants.length === 1;
+    remove.disabled = last || current.status === "accepted";
+    remove.title = last ? "A meeting needs at least one agent" : "";
+  }
   $("record").disabled = current.status === "accepted" || !config.whisper;
   $("message-form").querySelector("button[type=submit]").disabled =
     current.status === "accepted" || Boolean(recording);
@@ -415,6 +454,7 @@ function pause() {
   revision++;
   if (running) running.abort();
   running = null;
+  speaker = null;
   if (window.speechSynthesis) window.speechSynthesis.cancel();
   if (current && current.status === "running") current.status = "paused";
   clearSpeaker();
@@ -437,7 +477,7 @@ function openMeeting(m) {
   $("goal").textContent = m.goal;
   $("meeting-description").textContent = m.description || "No description";
   $("agenda").textContent = m.agenda || "No agenda";
-  $("meeting-agents").textContent = m.participants.map((agent) => agent.name).join(", ");
+  renderMeetingAgents();
   $("goal").focus();
   $("message-form").elements.message.value = "";
   error();
@@ -574,6 +614,17 @@ async function playAudio(blob, signal) {
     URL.revokeObjectURL(url);
   }
 }
+/** A just-cancelled turn can take a moment to release the model, so retry while busy. */
+async function requestTurn(data, signal) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await request("/api/turn", "POST", data, signal);
+    } catch (e) {
+      if (e.status !== 409 || attempt >= 10) throw e;
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+  }
+}
 async function run() {
   if (!current || running || recording || current.status === "accepted") return;
   stopPlayback();
@@ -598,6 +649,9 @@ async function run() {
       renderStatus(
         agent.name + " is thinking · " + (turns + 1) + " / " + limit,
       );
+      const turn = new AbortController(),
+        signal = AbortSignal.any([ctrl.signal, turn.signal]);
+      speaker = { id: agent.id, turn };
       clearSpeaker();
       [...$("team").children]
         .find((el) => el.dataset.agent === agent.id)
@@ -611,17 +665,19 @@ async function run() {
           .slice(-30)
           .map((x) => ({ speaker: x.speaker, text: x.text.slice(0, 4000) })),
       };
-      const result = await request(
-        "/api/turn",
-        "POST",
-        { agent, meeting: context },
-        ctrl.signal,
-      );
+      let result;
+      try {
+        result = await requestTurn({ agent, meeting: context }, signal);
+      } catch (e) {
+        if (turn.signal.aborted && !ctrl.signal.aborted) continue;
+        throw e;
+      }
       if (token !== revision || ctrl.signal.aborted) break;
+      if (turn.signal.aborted) continue;
       addMessage(
         agent.name,
         result.text,
-        names[agent.provider] + (agent.model ? " / " + agent.model : ""),
+        names[agent.provider] + (result.model ? " / " + result.model : ""),
       );
       m.cursor = (m.cursor ?? 0) + 1;
       turns++;
@@ -629,9 +685,9 @@ async function run() {
       if ($("voice-output").checked) {
         renderStatus(agent.name + " is speaking");
         try {
-          await speak(result.text, agent.voice, ctrl.signal);
+          await speak(result.text, agent.voice, signal);
         } catch (e) {
-          if (!ctrl.signal.aborted) $("audio-note").textContent = e.message;
+          if (!signal.aborted) $("audio-note").textContent = e.message;
         }
       }
       if (agent.provider === "demo")
@@ -642,6 +698,7 @@ async function run() {
   } finally {
     if (token === revision) {
       running = null;
+      speaker = null;
       if (m.status === "running") m.status = "paused";
       clearSpeaker();
       renderStatus(
@@ -672,8 +729,7 @@ $("agent-form").addEventListener("submit", async (e) => {
       id: crypto.randomUUID(),
       name: data.get("name"),
       provider: data.get("provider"),
-      model:
-        String(data.get("model")).trim() || defaults[data.get("provider")],
+      model: data.get("model"),
       voice: data.get("voice"),
       instructions: data.get("instructions"),
       skills,
@@ -690,7 +746,9 @@ $("agent-form").addEventListener("submit", async (e) => {
   }
 });
 $("agent-form").elements.provider.addEventListener("change", (e) => {
-  $("agent-form").elements.model.value = defaults[e.target.value];
+  // A model name from another provider is never carried over.
+  $("agent-form").elements.model.value = "";
+  $("agent-form").elements.model.disabled = e.target.value === "demo";
 });
 $("meeting-form").addEventListener("submit", (e) => {
   e.preventDefault();
@@ -853,12 +911,6 @@ async function init() {
         );
       void save();
     }
-    // Agents saved without a model get the default, so the choice is always visible.
-    for (const agent of [
-      ...state.agents,
-      ...state.meetings.flatMap((m) => m.participants),
-    ])
-      agent.model ||= defaults[agent.provider] ?? "";
     assignVoices(state.agents);
     for (const m of state.meetings) assignVoices(m.participants, state.agents);
     state.initialized = true;
@@ -876,27 +928,23 @@ async function init() {
     error(e.message);
   }
 }
+/** A fresh form: the connected provider, with the model left to automatic. */
 function resetAgentModel() {
   const { provider, model } = $("agent-form").elements;
   modelOptions(provider, preferredProvider);
-  model.value = defaults[preferredProvider];
+  model.value = "";
+  model.disabled = preferredProvider === "demo";
 }
-/** Start new agents on a connected provider and an installed model. */
+/** Start new agents on a provider that is connected. */
 async function chooseDefaults() {
   const result = await request("/api/models").catch(() => null);
   if (!result) return;
-  const installed = result.ollama.models.map((m) => m.name);
-  if (installed.length && !installed.includes(defaults.ollama))
-    defaults.ollama = installed[0];
-  const served = result.inference.models.map((m) => m.id);
-  if (served.length && !served.includes(defaults["openai-compatible"]))
-    defaults["openai-compatible"] = served[0];
   const connected = (cli) => config.cli && cli?.authenticated;
   preferredProvider = connected(result.claude)
     ? "claude"
     : connected(result.codex)
       ? "codex"
-      : installed.length
+      : result.ollama.models.length
         ? "ollama"
         : "demo";
   // Leave the form alone if someone has started filling it in.
@@ -980,10 +1028,7 @@ function renderAgentDirectory() {
     const card = node("article", undefined, "provider-card");
     card.append(
       node("strong", agent.name),
-      node(
-        "p",
-        names[agent.provider] + (agent.model ? " · " + agent.model : ""),
-      ),
+      node("p", modelLabel(agent)),
       node("p", agent.instructions || "No instructions yet."),
       button("View details ↗", () => viewAgent(agent)),
     );
@@ -1001,10 +1046,7 @@ function viewAgent(agent) {
   $("agent-detail").replaceChildren();
   const detail = (title, text) =>
     $("agent-detail").append(node("h3", title), node("p", text));
-  detail(
-    "MODEL",
-    names[agent.provider] + (agent.model ? " / " + agent.model : ""),
-  );
+  detail("MODEL", modelLabel(agent));
   detail("INSTRUCTIONS", agent.instructions || "No instructions.");
   detail("VOICE", agent.voice ? voiceName(agent.voice) : "Default local voice");
   for (const skill of agent.skills) detail(skill.name, skill.text);
@@ -1185,7 +1227,7 @@ $("starter-team").addEventListener("click", async () => {
     await save();
     $("starter-team-status").textContent =
       result.added +
-      " roles added. These use qwen2.5:3b; install it in Settings if needed.";
+      " roles added. Models are chosen automatically from your installed Ollama models.";
   } catch (err) {
     error(err.message);
   } finally {

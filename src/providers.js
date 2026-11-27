@@ -90,10 +90,14 @@ async function requestJSON(url, payload, signal, token) {
       (body) => body?.error,
       () => null,
     );
-    throw new Error(
-      "Model endpoint returned HTTP " +
-        response.status +
-        (typeof detail === "string" ? ": " + detail.slice(0, 1300) : ""),
+    throw Object.assign(
+      new Error(
+        "Model endpoint returned HTTP " +
+          response.status +
+          (typeof detail === "string" ? ": " + detail.slice(0, 1300) : ""),
+      ),
+      // A busy endpoint stays distinguishable so the browser can retry the turn.
+      response.status === 409 ? { status: 409 } : {},
     );
   }
   return response.json();

@@ -19,7 +19,7 @@ The team contains original, concise Quorum meeting instructions informed by thes
 
 ## Use
 
-Choose **Agents → Add specialist team (10 roles)**. This is idempotent: existing named roles, customizations, archived roles, and previous meetings remain intact. Each new role uses Ollama `qwen2.5:3b`; install it in Settings or with `docker compose exec ollama ollama pull qwen2.5:3b`. The smaller `qwen2.5:0.5b` remains the smoke-test model. Model size is not a guarantee of expertise; evaluate important recommendations against evidence.
+Choose **Agents → Add specialist team (10 roles)**. This is idempotent: existing named roles, customizations, archived roles, and previous meetings remain intact. Each new role uses Ollama with an [automatically chosen model](../README.md#automatic-model-selection); install a capable one in Settings or with `docker compose exec ollama ollama pull qwen2.5:3b`. The smaller `qwen2.5:0.5b` remains the smoke-test model. Model size is not a guarantee of expertise; evaluate important recommendations against evidence.
 
 Example meeting: “Decide the smallest safe launch for a self-service onboarding flow.” Invite Product Manager, Developer, Designer, QA and CISO. Add Project Manager for scheduling, and the commercial roles when acquisition, sales or support is part of the decision. You do not have to invite every role to every meeting.
 
