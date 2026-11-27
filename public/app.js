@@ -12,6 +12,8 @@ import {
   MAX_SKILLS,
   MAX_SKILL_CHARS,
   findMentions,
+  addParticipant,
+  MAX_PARTICIPANTS,
 } from "/engine.js";
 import { createImport } from "/import.js";
 import { createMentions } from "/mentions.js";
@@ -406,7 +408,7 @@ function renderTeam() {
       renderTeam();
       void save();
     });
-    const remove = button("Remove from call", () => removeFromCall(a.id), "danger-soft");
+    const remove = button("Remove", () => removeFromCall(a.id), "danger-soft");
     remove.classList.add("remove-agent");
     remove.setAttribute("aria-label", "Remove " + a.name + " from call");
     const fields = [
@@ -418,10 +420,14 @@ function renderTeam() {
     ask.classList.add("tag-agent");
     ask.setAttribute("aria-label", "Tag " + a.name + " in your message");
     ask.disabled = current.status === "accepted";
-    settings.append(toggle, ...fields, remove);
-    card.append(head, ask, settings);
+    const actions = node("div", undefined, "actions participant__actions");
+    actions.append(ask, remove);
+    settings.append(toggle, ...fields);
+    card.append(head, actions, settings);
     $("team").append(card);
   }
+  $("room-count").textContent =
+    current.participants.length + " of " + MAX_PARTICIPANTS;
 }
 function renderMeetingAgents() {
   $("meeting-agents").textContent = current.participants
@@ -445,8 +451,101 @@ function removeFromCall(id) {
   renderMeetingAgents();
   renderHistory();
   renderStatus(removed.name + " was removed from the call.");
-  $("goal").focus({ preventScroll: true });
+  $("invite-more").focus({ preventScroll: true });
 }
+/** Library agents not in the meeting, preceded by those removed from it. A removed
+ * agent comes back as it left, with any model or voice chosen for this meeting. */
+function joinable() {
+  const present = new Set(current.participants.map((p) => p.id));
+  const left = (current.removedParticipants ?? []).filter((p) => !present.has(p.id));
+  const gone = new Set(left.map((p) => p.id));
+  return [
+    ...left.map((agent) => ({ agent, left: true })),
+    ...state.agents
+      .filter((a) => !present.has(a.id) && !gone.has(a.id))
+      .map((agent) => ({ agent, left: false })),
+  ];
+}
+function renderJoinList() {
+  if (!current) return;
+  const query = $("join-search").value.trim().toLowerCase();
+  const full = current.participants.length >= MAX_PARTICIPANTS;
+  const inRoom = new Set(current.participants.map((p) => p.name.toLowerCase()));
+  const shown = joinable().filter(({ agent }) =>
+    [agent.name, groupOf(agent), ...agent.skills.map((s) => s.name)].some((text) =>
+      text.toLowerCase().includes(query),
+    ),
+  );
+  $("join-list").replaceChildren(
+    ...shown.map(({ agent, left }) => {
+      const row = node("li", undefined, "join-item"),
+        taken = inRoom.has(agent.name.toLowerCase()),
+        add = button("Add", () => joinCall(agent), "primary");
+      add.disabled = full || taken;
+      add.setAttribute("aria-label", "Add " + agent.name + " to the meeting");
+      row.append(
+        avatar(agent.name),
+        agentInfo(
+          agent,
+          taken
+            ? "Someone with this name is already in the meeting"
+            : (left ? "Left this meeting · " : "") + modelLabel(agent),
+        ),
+        add,
+      );
+      return row;
+    }),
+  );
+  if (!shown.length)
+    $("join-list").append(
+      empty(
+        query ? "No matches" : "Everyone is here",
+        query
+          ? "No agents match your search."
+          : "Create or import another agent on the Agents page.",
+      ),
+    );
+  $("join-count").textContent = full
+    ? "This meeting is full (" + MAX_PARTICIPANTS + " agents). Remove one to add another."
+    : current.participants.length + " of " + MAX_PARTICIPANTS + " in the meeting";
+}
+/** Bring an agent in, even mid-discussion: it speaks when the rotation reaches it. */
+function joinCall(source) {
+  if (!current || current.status === "accepted") return;
+  const agent = structuredClone(source);
+  try {
+    addParticipant(current, agent);
+  } catch (e) {
+    $("join-count").textContent = e.message;
+    return;
+  }
+  // The newcomer is last, so everyone already there keeps their voice.
+  assignVoices(current.participants, state.agents);
+  current.removedParticipants = current.removedParticipants?.filter(
+    (p) => p.id !== agent.id,
+  );
+  addMessage("Quorum", agent.name + " joined the call.");
+  renderTeam();
+  renderMeetingAgents();
+  renderHistory();
+  renderStatus(
+    running
+      ? $("progress").textContent
+      : agent.name + " joined. Tag them or continue when ready.",
+  );
+  renderJoinList();
+  // The button that had focus is gone, so keep the keyboard in the list.
+  ($("join-list").querySelector("button:not([disabled])") ?? $("join-close")).focus();
+}
+$("invite-more").addEventListener("click", () => {
+  if (!current) return;
+  $("join-search").value = "";
+  renderJoinList();
+  $("join-dialog").showModal();
+  $("join-search").focus();
+});
+$("join-search").addEventListener("input", renderJoinList);
+$("join-close").addEventListener("click", () => $("join-dialog").close());
 function renderTranscript() {
   $("transcript").replaceChildren();
   if (!current) return;
@@ -590,6 +689,7 @@ function renderStatus(message = "") {
   }
   for (const ask of $("team").querySelectorAll(".tag-agent"))
     ask.disabled = current.status === "accepted";
+  $("invite-more").disabled = current.status === "accepted";
   $("record").disabled = current.status === "accepted" || !config.whisper;
   $("message-form").querySelector("button[type=submit]").disabled =
     current.status === "accepted" || Boolean(recording);
@@ -957,7 +1057,7 @@ $("meeting-form").addEventListener("submit", (e) => {
   const participants = state.agents
     .filter((a) => ids.includes(a.id))
     .map((a) => structuredClone(a));
-  if (participants.length > 12) {
+  if (participants.length > MAX_PARTICIPANTS) {
     error("Choose at most 12 participants.");
     return;
   }
@@ -1565,6 +1665,13 @@ $("starter-team").addEventListener("click", async () => {
         state.meetings.find((meeting) => meeting.id === current.id) ?? null;
     assignVoices(state.agents);
     renderAgents();
+    // The history list and the open room must point at the new meeting objects.
+    renderHistory();
+    if (current) {
+      renderTeam();
+      renderTranscript();
+      renderStatus();
+    }
     await save();
     $("starter-team-status").textContent =
       result.added +

@@ -1,5 +1,6 @@
 export const providers = ['demo', 'ollama', 'openai-compatible', 'claude', 'codex'];
 export const MAX_TURNS = 60;
+export const MAX_PARTICIPANTS = 12;
 export const MAX_SKILLS = 16;
 // Agents or skills taken in one import.
 export const MAX_IMPORT = 50;
@@ -37,6 +38,21 @@ export function removeParticipant(meeting, id) {
   const [removed] = participants.splice(index, 1);
   meeting.cursor = next % participants.length;
   return removed;
+}
+/** Bring one agent into a meeting without changing whose turn is next. */
+export function addParticipant(meeting, agent) {
+  const { participants } = meeting;
+  // Tags and voices are matched by name, so names must differ within a meeting.
+  const name = agent.name.toLowerCase();
+  if (participants.some(p => p.id === agent.id || p.name.toLowerCase() === name))
+    throw new Error(agent.name + ' is already in the meeting');
+  if (participants.length >= MAX_PARTICIPANTS)
+    throw new Error('A meeting can have at most ' + MAX_PARTICIPANTS + ' agents');
+  const count = participants.length;
+  const next = count ? (((meeting.cursor ?? 0) % count) + count) % count : 0;
+  participants.push(agent);
+  meeting.cursor = next;
+  return agent;
 }
 export function canContinue(meeting, turns, limit) {
   return meeting.status !== 'accepted' && turns < Math.min(MAX_TURNS, Math.max(1, limit));

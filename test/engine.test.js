@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { nextParticipant, canContinue, normalizeAgent, makePrompt, removeParticipant, assignVoices, speakable, speechChunks, hostVoice, voices, findRepeat, withoutCopies, withoutRepeatedSentences, findMentions, mentionAt, suggestMentions } from '../src/engine.js';
+import { nextParticipant, canContinue, normalizeAgent, makePrompt, removeParticipant, assignVoices, speakable, speechChunks, hostVoice, voices, findRepeat, withoutCopies, withoutRepeatedSentences, findMentions, mentionAt, suggestMentions, addParticipant, MAX_PARTICIPANTS } from '../src/engine.js';
 test('participants take turns in order and repeat', () => {
   const p = [{name:'A'},{name:'B'}];
   assert.equal(nextParticipant(p,0).name,'A');
@@ -112,4 +112,23 @@ test('a directly tagged agent is told to answer, once', () => {
   assert.match(makePrompt(agent, meeting([says('Host', '@QA what breaks?')])).system, /addressed you directly/);
   assert.doesNotMatch(makePrompt(agent, meeting([says('Host', '@QA what breaks?'), says('QA', 'The bin.')])).system, /addressed you directly/);
   assert.doesNotMatch(makePrompt(agent, meeting([says('Host', 'What breaks?')])).system, /addressed you directly/);
+});
+test('adding a participant keeps the next speaker', () => {
+  // Cursor 4 of three means b is next (or speaking now).
+  const meeting = { cursor: 4, participants: ['a', 'b', 'c'].map(id => ({ id, name: id })) };
+  addParticipant(meeting, { id: 'd', name: 'd' });
+  assert.equal(nextParticipant(meeting.participants, meeting.cursor).id, 'b');
+  assert.deepEqual(meeting.participants.map(p => p.id), ['a', 'b', 'c', 'd']);
+  // The one who left and returns is also last, and the rotation reaches them.
+  removeParticipant(meeting, 'a');
+  addParticipant(meeting, { id: 'a', name: 'a' });
+  assert.equal(nextParticipant(meeting.participants, meeting.cursor).id, 'b');
+});
+test('a meeting refuses duplicates, shared names and a thirteenth agent', () => {
+  const meeting = { participants: [{ id: 'a', name: 'QA' }] };
+  assert.throws(() => addParticipant(meeting, { id: 'a', name: 'Other' }), /already/);
+  assert.throws(() => addParticipant(meeting, { id: 'b', name: 'qa' }), /already/);
+  for (let i = 1; i < MAX_PARTICIPANTS; i++) addParticipant(meeting, { id: 'n' + i, name: 'N' + i });
+  assert.throws(() => addParticipant(meeting, { id: 'z', name: 'Z' }), /at most 12/);
+  assert.equal(meeting.participants.length, MAX_PARTICIPANTS);
 });
