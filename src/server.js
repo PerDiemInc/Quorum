@@ -14,6 +14,7 @@ import {
   claudeStatus,
 } from "./models.js";
 import { addStarterAgents } from "./agent-templates.js";
+import { listLocal, readLocal, listGitHub, readGitHub } from "./import.js";
 
 const port = Number(process.env.PORT ?? 4710);
 if (!Number.isInteger(port) || port < 1 || port > 65535)
@@ -34,6 +35,7 @@ const assets = new Map([
   ["/app.js", ["app.js", "text/javascript; charset=utf-8"]],
   ["/styles.css", ["styles.css", "text/css; charset=utf-8"]],
   ["/engine.js", ["../src/engine.js", "text/javascript; charset=utf-8"]],
+  ["/import.js", ["import.js", "text/javascript; charset=utf-8"]],
 ]);
 // Docker listens on its network interface; the published port stays loopback-only.
 /** @type {string} */
@@ -134,6 +136,20 @@ const server = createServer(async (req, res) => {
       state._revision = (state._revision ?? 0) + 1;
       save.run(JSON.stringify(state));
       return json(res, 200, { state, added });
+    }
+    if (req.method === "GET" && path === "/api/import/local")
+      return json(res, 200, await listLocal());
+    if (req.method === "POST" && path === "/api/import/local") {
+      const data = await parseJSON(req, 10_000);
+      return json(res, 200, await readLocal(data.ids));
+    }
+    if (req.method === "POST" && path === "/api/import/github") {
+      const data = await parseJSON(req, 2000);
+      return json(res, 200, await listGitHub(data.url, signal));
+    }
+    if (req.method === "POST" && path === "/api/import/github/fetch") {
+      const data = await parseJSON(req, 40_000);
+      return json(res, 200, await readGitHub(data.url, data.paths, signal));
     }
     if (req.method === "GET" && path === "/api/models")
       return json(res, 200, await modelSettings());

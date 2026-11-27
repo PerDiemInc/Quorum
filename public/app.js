@@ -9,7 +9,10 @@ import {
   assignVoices,
   speakable,
   speechChunks,
+  MAX_SKILLS,
+  MAX_SKILL_CHARS,
 } from "/engine.js";
+import { createImport } from "/import.js";
 
 const $ = (id) => document.getElementById(id);
 const names = {
@@ -571,6 +574,13 @@ async function speak(text, voice, signal) {
   };
   const parts = speechChunks(spoken);
   let next = synthesize(parts[0]);
+  try {
+    await next;
+  } catch (e) {
+    if (signal.aborted) return;
+    $("audio-note").textContent = e.message + " Using a browser voice.";
+    return localSpeak(spoken, voice, signal);
+  }
   for (let i = 0; i < parts.length && !signal.aborted; i++) {
     const audio = await next;
     // Prepare the following sentences while these ones play.
@@ -717,14 +727,16 @@ $("agent-form").addEventListener("submit", async (e) => {
   const f = e.currentTarget,
     data = new FormData(f);
   try {
-    const skills = [];
+    const skills = [...pendingSkills];
     for (const file of f.elements.skills.files) {
-      if (file.size > 12000)
-        throw new Error("Skill files must be under 12 KB for this version.");
+      if (file.size > MAX_SKILL_CHARS)
+        throw new Error("Skill files must be under 32 KB.");
       skills.push({ name: file.name, text: await file.text() });
     }
     if (String(data.get("skillText")).trim())
       skills.push({ name: "Custom skill", text: data.get("skillText") });
+    if (skills.length > MAX_SKILLS)
+      throw new Error("An agent can have at most " + MAX_SKILLS + " skills.");
     const agent = normalizeAgent({
       id: crypto.randomUUID(),
       name: data.get("name"),
@@ -736,6 +748,8 @@ $("agent-form").addEventListener("submit", async (e) => {
     });
     state.agents.push(agent);
     assignVoices(state.agents);
+    pendingSkills = [];
+    renderPendingSkills();
     f.reset();
     resetAgentModel();
     $("create-agent").open = false;
@@ -929,6 +943,100 @@ async function init() {
   }
 }
 /** A fresh form: the connected provider, with the model left to automatic. */
+/** Skills imported for the agent that is still being created. */
+let pendingSkills = [];
+function renderPendingSkills() {
+  $("new-agent-skills").replaceChildren(
+    ...pendingSkills.map((skill) => {
+      const item = node("li");
+      const remove = button("Remove", () => {
+        pendingSkills = pendingSkills.filter((s) => s !== skill);
+        renderPendingSkills();
+      });
+      remove.setAttribute("aria-label", "Remove " + skill.name);
+      item.append(node("span", skill.name), remove);
+      return item;
+    }),
+  );
+}
+/** Add skills, replacing ones with the same name so a re-import updates them. */
+function mergeSkills(existing, added) {
+  const merged = new Map(existing.map((s) => [s.name, s]));
+  for (const { name, text, source } of added)
+    merged.set(name, { name, text, source });
+  if (merged.size > MAX_SKILLS)
+    throw new Error("An agent can have at most " + MAX_SKILLS + " skills.");
+  return [...merged.values()];
+}
+async function addImportedSkills(target, skills) {
+  const agent = state.agents.find((a) => a.id === target);
+  if (!agent) {
+    pendingSkills = mergeSkills(pendingSkills, skills);
+    renderPendingSkills();
+    $("create-agent").open = true;
+    return "the new agent";
+  }
+  agent.skills = mergeSkills(agent.skills, skills);
+  renderAgents();
+  await save();
+  return agent.name;
+}
+/** Turn imported profiles into agents. Importing one again updates it in place. */
+async function addImportedAgents(profiles, provider) {
+  let added = 0,
+    updated = 0;
+  for (const profile of profiles) {
+    const existing = state.agents.find(
+      (a) => a.source === profile.source && a.importedName === profile.name,
+    );
+    let name = existing?.name ?? profile.name;
+    for (let n = 2; !existing && state.agents.some((a) => a.name === name); n++)
+      name = profile.name.slice(0, 76) + " " + n;
+    // A profile's Claude model is kept only when the agent runs on Claude.
+    const claudeModel =
+      provider === "claude" && /^(sonnet|opus|haiku|claude-)/.test(profile.model);
+    const agent = {
+      ...normalizeAgent({
+        id: existing?.id ?? crypto.randomUUID(),
+        name,
+        provider: existing?.provider ?? provider,
+        model: existing?.model ?? (claudeModel ? profile.model : ""),
+        voice: existing?.voice ?? "",
+        instructions: profile.instructions,
+        skills: mergeSkills(existing?.skills ?? [], profile.skills),
+      }),
+      source: profile.source,
+      importedName: profile.name,
+    };
+    if (existing) {
+      state.agents[state.agents.indexOf(existing)] = agent;
+      updated++;
+    } else {
+      state.agents.push(agent);
+      added++;
+    }
+  }
+  assignVoices(state.agents);
+  renderAgents();
+  await save();
+  return { added, updated };
+}
+const openImport = createImport({
+  node,
+  request,
+  agents: () => state.agents,
+  providerChoices: (select) => modelOptions(select, preferredProvider),
+  addSkills: addImportedSkills,
+  addAgents: addImportedAgents,
+});
+$("new-agent-import").addEventListener("click", () => openImport(""));
+$("import-agents").addEventListener("click", () =>
+  openImport(state.agents[0]?.id ?? ""),
+);
+$("detail-import").addEventListener("click", () => {
+  $("agent-dialog").close();
+  openImport(viewedAgentId);
+});
 function resetAgentModel() {
   const { provider, model } = $("agent-form").elements;
   modelOptions(provider, preferredProvider);
@@ -1048,9 +1156,26 @@ function viewAgent(agent) {
     $("agent-detail").append(node("h3", title), node("p", text));
   detail("MODEL", modelLabel(agent));
   detail("INSTRUCTIONS", agent.instructions || "No instructions.");
+  if (agent.source) detail("IMPORTED FROM", agent.source);
   detail("VOICE", agent.voice ? voiceName(agent.voice) : "Default local voice");
-  for (const skill of agent.skills) detail(skill.name, skill.text);
-  $("agent-dialog").showModal();
+  $("agent-detail").append(node("h3", "SKILLS"));
+  if (!agent.skills.length)
+    $("agent-detail").append(node("p", "No skills yet."));
+  for (const skill of agent.skills) {
+    const item = node("details"),
+      remove = button("Remove skill", async () => {
+        agent.skills = agent.skills.filter((s) => s !== skill);
+        renderAgents();
+        viewAgent(agent);
+        await save();
+      });
+    item.append(node("summary", skill.name));
+    if (skill.source)
+      item.append(node("p", "Imported from " + skill.source, "muted small"));
+    item.append(node("p", skill.text), remove);
+    $("agent-detail").append(item);
+  }
+  if (!$("agent-dialog").open) $("agent-dialog").showModal();
 }
 $("close-agent").addEventListener("click", () => $("agent-dialog").close());
 $("delete-agent").addEventListener("click", async () => {

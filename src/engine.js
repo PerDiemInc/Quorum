@@ -1,17 +1,23 @@
 export const providers = ['demo', 'ollama', 'openai-compatible', 'claude', 'codex'];
 export const MAX_TURNS = 60;
+export const MAX_SKILLS = 16;
+// Agents or skills taken in one import.
+export const MAX_IMPORT = 50;
+// Room for a full SKILL.md or agent profile; sixteen skills still fit within one turn request.
+export const MAX_SKILL_CHARS = 32_000;
 export function normalizeAgent(input) {
   if (!input || typeof input !== 'object') throw new Error('Agent required');
   const name = String(input.name ?? '').trim();
   const provider = String(input.provider ?? '');
   if (!name || name.length > 80 || !providers.includes(provider)) throw new Error('Invalid agent name or provider');
   const model = String(input.model ?? '').trim().slice(0, 200);
-  const skills = Array.isArray(input.skills) ? input.skills.slice(0, 16).map(s => ({
+  const skills = Array.isArray(input.skills) ? input.skills.slice(0, MAX_SKILLS).map(s => ({
     name: String(s.name ?? 'Skill').slice(0, 200),
-    text: String(s.text ?? '').slice(0, 12000),
+    text: String(s.text ?? '').slice(0, MAX_SKILL_CHARS),
+    ...(s.source ? { source: String(s.source).slice(0, 200) } : {}),
   })) : [];
   return { id: String(input.id ?? ''), name, provider, model,
-    instructions: String(input.instructions ?? '').slice(0, 12000),
+    instructions: String(input.instructions ?? '').slice(0, MAX_SKILL_CHARS),
     voice: String(input.voice ?? '').slice(0, 100), skills };
 }
 export function nextParticipant(participants, cursor) {
@@ -71,6 +77,16 @@ export const voices = [
   ['bm_lewis', 'Lewis · British man'],
   ['af_sarah', 'Sarah · American woman'],
   ['am_liam', 'Liam · American man'],
+  ['af_nova', 'Nova · American woman'],
+  ['am_onyx', 'Onyx · American man'],
+  ['bf_alice', 'Alice · British woman'],
+  ['bm_daniel', 'Daniel · British man'],
+  ['af_sky', 'Sky · American woman'],
+  ['am_echo', 'Echo · American man'],
+  ['bf_lily', 'Lily · British woman'],
+  ['af_river', 'River · American woman'],
+  ['af_jessica', 'Jessica · American woman'],
+  ['af_alloy', 'Alloy · American woman'],
 ];
 /** Reads the host's own messages, so it is never given to an agent. */
 export const hostVoice = 'am_adam';

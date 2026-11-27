@@ -108,6 +108,12 @@
               <label
                 >Voice<select name="voice"></select
               ></label>
+              <div class="skill-picker">
+                <button type="button" class="secondary" id="new-agent-import">
+                  Import skills
+                </button>
+                <ul id="new-agent-skills" aria-label="Imported skills"></ul>
+              </div>
               <label
                 >Skill files (SKILL.md)<input
                   name="skills"
@@ -287,6 +293,9 @@
           <button id="starter-team" class="secondary" type="button">
             Add specialist team (10 roles)
           </button>
+          <button id="import-agents" class="secondary" type="button">
+            Import from GitHub or Claude
+          </button>
           <p id="starter-team-status" class="muted small" role="status"></p>
           <div id="agent-directory" class="provider-grid"></div>
         </section>
@@ -351,12 +360,74 @@
         </button>
       </div>
       <div id="agent-detail"></div>
-      <button id="delete-agent" class="danger" type="button">
-        Delete agent
-      </button>
+      <div class="controls">
+        <button id="detail-import" class="secondary" type="button">
+          Import skills
+        </button>
+        <button id="delete-agent" class="danger" type="button">
+          Delete agent
+        </button>
+      </div>
       <p class="muted small">
         Existing meetings retain their own copy of this agent.
       </p>
+    </dialog>
+    <dialog id="import-dialog" aria-labelledby="import-title">
+      <div class="heading">
+        <h2 id="import-title">Import agents and skills</h2>
+        <button
+          id="import-close"
+          class="secondary"
+          type="button"
+          aria-label="Close import"
+        >
+          ✕
+        </button>
+      </div>
+      <div class="mode-switch" role="group" aria-label="Import source">
+        <button id="import-tab-github" type="button" aria-pressed="true">
+          GitHub
+        </button>
+        <button id="import-tab-local" type="button" aria-pressed="false">
+          Claude on this computer
+        </button>
+      </div>
+      <form id="import-github">
+        <label
+          >GitHub repository, folder or file address<input
+            name="url"
+            maxlength="500"
+            placeholder="e.g. https://github.com/owner/repo"
+        /></label>
+        <button type="submit" class="secondary">Fetch</button>
+      </form>
+      <label
+        >Search<input
+          id="import-search"
+          type="search"
+          placeholder="Name or description"
+      /></label>
+      <div class="import-bar">
+        <span id="import-count" class="muted small" aria-live="polite"></span>
+        <button id="import-all" type="button" class="secondary">
+          Select all shown
+        </button>
+      </div>
+      <div id="import-list"></div>
+      <div class="import-options">
+        <label id="import-provider-field"
+          >Run new agents on<select id="import-provider"></select
+        ></label>
+        <label id="import-target-field"
+          >Add skills to<select id="import-target"></select
+        ></label>
+      </div>
+      <p id="import-status" role="status"></p>
+      <p class="muted small">
+        Import only files you trust: their text becomes an agent's instructions
+        and is sent to its model. Scripts and linked files are not imported.
+      </p>
+      <button id="import-add" type="button" disabled>Add</button>
     </dialog>
     <div id="alert" role="alert">
       <p id="error"></p>
