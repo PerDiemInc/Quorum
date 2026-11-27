@@ -241,6 +241,37 @@ dialog.modal__dialog > #import-list { display: flex; flex-direction: column; gap
 .import-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); gap: 0.625rem; }
 .import-options:not(:has(> :not([hidden]))) { display: none; }
 
+/* Files: cards under a message, chips in the meeting, and their dialogs. */
+.message.has-files { width: min(92%, 46rem); }
+.message.has-files .message-body { flex: 1; }
+.files { display: flex; flex-direction: column; align-self: stretch; gap: 0.5rem; min-width: 0; }
+.file-card { min-width: 0; padding: 0.5rem 0.75rem; border: 1px solid var(--border); border-radius: 1rem; background: var(--surface-secondary); }
+.file-card summary { display: flex; flex-wrap: wrap; align-items: center; gap: 0.25rem 0.625rem; min-height: 2rem; }
+.file-card summary::before { content: "▸"; color: var(--muted); }
+.file-card[open] summary::before { content: "▾"; }
+.file-card summary strong { min-width: 0; overflow-wrap: anywhere; font-weight: 600; }
+.file-card pre { max-height: 18rem; overflow: auto; padding: 0.75rem; border-radius: 0.875rem; background: var(--surface); font-size: 0.75rem; line-height: 1.6; tab-size: 2; }
+#attachments { display: flex; flex-wrap: wrap; gap: 0.375rem; margin: 0; padding: 0; list-style: none; }
+#attachments:empty { display: none; }
+.attachment { display: flex; align-items: center; gap: 0.25rem; max-width: 100%; padding-inline-start: 0.75rem; border-radius: 1rem; background: var(--accent-soft); font-size: 0.75rem; }
+.attachment span { min-width: 0; overflow-wrap: anywhere; }
+.attachment button { flex: none; }
+.file-list { display: flex; flex-direction: column; gap: 0.25rem; margin: 0; padding: 0; list-style: none; }
+.file-list:empty { display: none; }
+dialog.modal__dialog .file-list { max-height: 30dvh; overflow: auto; }
+.file-list li { display: flex; flex: none; flex-wrap: wrap; align-items: center; gap: 0.25rem 0.75rem; padding: 0.375rem 0.75rem; border-radius: 0.875rem; background: var(--surface-secondary); }
+.file-list li span { flex: 1; min-width: 8rem; overflow-wrap: anywhere; }
+dialog.modal__dialog h3 { font-size: 0.8125rem; font-weight: 600; }
+dialog.modal__dialog > .pick-list { display: flex; flex-direction: column; gap: 0.375rem; flex: 0 1 auto; min-height: 6rem; max-height: 30dvh; overflow: auto; }
+.pick-list .checkbox { flex: none; padding: 0.5rem 0.75rem; border-radius: 1rem; background: var(--surface-secondary); }
+.pick-list .checkbox__content { width: 100%; }
+.inline-form { flex-direction: row; flex-wrap: wrap; align-items: flex-end; gap: 0.5rem; }
+.inline-form .field { flex: 1; min-width: 12rem; }
+.status, .notice { overflow-wrap: anywhere; }
+a.button { text-decoration: none; }
+#commit-link { align-self: flex-start; }
+#commit-setup ul { display: flex; flex-direction: column; gap: 0.25rem; margin: 0.5rem 0; padding-inline-start: 1.25rem; list-style: disc; }
+
 /* Error toast */
 #alert { position: fixed; z-index: 30; left: 50%; bottom: 1.25rem; transform: translateX(-50%); width: min(35rem, calc(100vw - 2rem)); align-items: center; box-shadow: var(--overlay-shadow); animation: rise 0.25s ease; }
 #alert:has(#error:empty) { display: none; }
@@ -278,7 +309,8 @@ dialog.modal__dialog > #import-list { display: flex; flex-direction: column; gap
   .button, .tabs__tab, summary.button, .history-item { min-height: 2.75rem; }
   .button--icon-only, .play { width: 2.75rem; }
   .input, .textarea { min-height: 2.75rem; font-size: 1rem; }
-  .switch, .compact { min-height: 2.75rem; }
+  .switch, .compact, .pick-list .checkbox, .file-card summary { min-height: 2.75rem; }
+  .switch__content { min-height: 2.75rem; }
   .close-button { width: 2.75rem; height: 2.75rem; }
 }
 @media (prefers-reduced-motion: reduce) {

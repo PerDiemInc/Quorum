@@ -50,7 +50,7 @@ test("container binding retains host/origin protection and persists SQLite acros
   await start();
   const base = "http://127.0.0.1:" + port;
   // The browser asks for JavaScript and receives the TypeScript with its types removed.
-  for (const name of ["app", "engine", "import", "mentions"]) {
+  for (const name of ["app", "engine", "files", "import", "mentions"]) {
     const asset = await fetch(base + "/" + name + ".js");
     assert.equal(asset.status, 200, name);
     assert.match(asset.headers.get("content-type") ?? "", /javascript/);

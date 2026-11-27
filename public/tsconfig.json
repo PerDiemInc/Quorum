@@ -8,7 +8,8 @@
     "paths": {
       "/engine.js": ["../src/engine.ts"],
       "/import.js": ["./import.ts"],
-      "/mentions.js": ["./mentions.ts"]
+      "/mentions.js": ["./mentions.ts"],
+      "/files.js": ["./files.ts"]
     }
   },
   "include": ["*.ts"]

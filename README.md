@@ -74,14 +74,14 @@ Typing a model name pins it. A pinned Ollama model that is no longer installed f
 
 ### Dashboard
 
-- **Meeting room:** set a goal, add an optional description and agenda, invite agents or reuse the last team, run or pause turns, add feedback, and accept the outcome yourself. **Add agent** brings another one in and **Remove** on a card drops one, at any point before acceptance, even mid-discussion. A newcomer sees the recent conversation and speaks when the rotation reaches it; a removed agent's unfinished reply is discarded and can be added back with the settings it had. Earlier messages and the agent library are kept. A meeting has between 1 and 12 agents.
+- **Meeting room:** set a goal, add an optional description and agenda, invite agents or reuse the last team, attach files, run or pause turns, add feedback, and accept the outcome yourself. **Add agent** brings another one in and **Remove** on a card drops one, at any point before acceptance, even mid-discussion. A newcomer sees the recent conversation and speaks when the rotation reaches it; a removed agent's unfinished reply is discarded and can be added back with the settings it had. Earlier messages and the agent library are kept. A meeting has between 1 and 12 agents. Agents can [propose files](#files-the-workspace-folder-and-github) for you to save or commit.
 - **Meeting history:** search by goal, description, agenda, or agent. Reopen a saved room to see its context, participant snapshots, and transcript.
 - **Agents:** create specialists, inspect instructions/skills/model/voice, delete from the library, or restore the most recently deleted agent. Existing meetings retain independent participant snapshots. Deleted agents are retained in SQLite for restoration.
 - **Settings:** list installed Ollama and compatible endpoint models, check provider access, and install an Ollama model by name. Downloads show progress and errors and survive page navigation. One download runs at a time. If the app restarts, run the pull again; Ollama reuses already downloaded layers. A healthy Ollama process does not imply that any model has been pulled.
 
 ### Storage and lifecycle
 
-Named volumes preserve SQLite state (`quorum-data`), Ollama weights (`ollama-models`), optional Hugging Face GGUF downloads (`hf-models`), and optional speech weights (`whisper-models`). The app runs as a non-root user with a read-only root filesystem and a writable `/data` volume. No Docker socket or host credentials are mounted.
+Named volumes preserve SQLite state and the workspace folder (`quorum-data`), Ollama weights (`ollama-models`), optional Hugging Face GGUF downloads (`hf-models`), and optional speech weights (`whisper-models`). The app runs as a non-root user with a read-only root filesystem and a writable `/data` volume. No Docker socket or host credentials are mounted.
 
 ```bash
 docker compose ps                         # Health status
@@ -140,7 +140,7 @@ QUORUM_URL=http://127.0.0.1:4710 npm run smoke
 docker run --rm -v "$PWD:/app:ro" -w /app node:24-alpine npm test
 ```
 
-The smoke test checks app health, origin rejection, model discovery, and an actual Ollama response without modifying agents or meetings. Automated tests cover download errors/concurrency, speech request formatting, Host/Origin restrictions, and SQLite persistence across server restart.
+The smoke test checks app health, origin rejection, model discovery, and an actual Ollama response without modifying agents or meetings. Automated tests cover download errors/concurrency, speech request formatting, Host/Origin restrictions, SQLite persistence across server restart, file extraction and path safety, preview isolation, and the GitHub flow against a mocked API.
 
 ## Run on this Mac with the Docker model services
 
@@ -173,6 +173,69 @@ Node.js 24+ is required (built-in SQLite); running the app needs no npm dependen
 - **Claude Code / Codex:** install and authenticate the respective CLI yourself, then start with `QUORUM_ENABLE_CLI=1 npm start`. Leave the model blank for the automatic choice, or type a supported model name. These clients usually use cloud inference, not offline inference. Claude receives an empty tool list and empty MCP configuration; Codex uses its read-only sandbox. These settings are not a complete isolation boundary: installed CLI configuration, integrations and read access may still apply. Enable only for trusted agents and skills.
 - **Other endpoints:** an OpenAI-compatible provider can use a deliberately configured remote URL and optional `QUORUM_OPENAI_KEY`. This sends conversation and assigned instructions to that service.
 
+## Files, the workspace folder and GitHub
+
+Agents can propose files, such as an HTML and CSS design or source code, and you decide what happens to them. A proposed file appears as a card under the message, with its path, size and contents. Nothing is written until you press **Save to folder** or **Commit to GitHub**, which act on that message's files. Both still work after a meeting is accepted.
+
+**Who can create files.** **Can create files** is a switch in **Create an agent**, in an agent's details and in a participant's **Settings** in a meeting. Until you set it, it is on for agents in the Build group, for agents whose name contains Design, Engineer or Developer (which includes Business Developer), and for agents given a skill with "engineer" in its name. Those agents are asked to send whole files in blocks marked `file:relative/path.ext`, and to keep designs self-contained. They get room for longer replies, so their turns can take much longer and cost more. A small local model may not produce usable files.
+
+**The workspace folder** is `~/quorum-workspace`, or `QUORUM_WORKSPACE`. **Save to folder** writes into a folder inside it, named after the meeting goal unless you change it, and asks before replacing a file. **Preview** opens a saved HTML or SVG file in a new tab with scripts off and the network blocked. Stylesheets in the workspace that a page links to are included; other linked files, including images, are not loaded.
+
+In Docker the workspace is `/data/workspace` inside the `quorum-data` volume, not a folder on your computer. Copy it out with `docker compose cp quorum:/data/workspace ./quorum-workspace`.
+
+**Attach files** in a meeting adds text files from the workspace, or one file from a GitHub file address (`https://github.com/owner/repo/blob/branch/path`), for every agent to read. They show as chips you can remove, and their contents go to the agents' model providers. A public file needs no account; a private one needs `QUORUM_GITHUB_TOKEN`. Branch names containing `/` are not supported in these addresses.
+
+### Committing to GitHub
+
+Committing is **off by default**. Turn it on with one of these, then restart Quorum:
+
+```bash
+# A fine-grained token limited to the repository, with Contents and Pull requests: read and write.
+QUORUM_GITHUB_TOKEN=github_pat_... QUORUM_GITHUB_WRITE=1 QUORUM_GITHUB_REPOS=owner/repo npm run start:local
+# Or use the account the GitHub CLI is signed in to (native installs; run gh auth login first).
+QUORUM_GITHUB_CLI=1 npm run start:local
+```
+
+A token on its own is only used to read, for private imports and attachments; committing also needs `QUORUM_GITHUB_WRITE=1`. The Compose file passes none of these variables to the container. To commit from Docker, put the token in `.env` and add a `compose.override.yaml`:
+
+```yaml
+services:
+  quorum:
+    environment:
+      QUORUM_GITHUB_TOKEN: ${QUORUM_GITHUB_TOKEN:-}
+      QUORUM_GITHUB_WRITE: "1"
+      QUORUM_GITHUB_REPOS: ${QUORUM_GITHUB_REPOS:-}
+```
+
+A commit creates a new branch named `quorum/<message>-<time>` from the default branch, with one commit, and opens a pull request. Quorum never updates the default branch or any other existing branch. If the pull request cannot be opened, the message names the branch that was left behind. The repository needs at least one commit, and Quorum does not fork: you need write access.
+
+| Variable | Meaning |
+|---|---|
+| `QUORUM_WORKSPACE` | The workspace folder. Default `~/quorum-workspace`; `/data/workspace` in the Docker image. |
+| `QUORUM_GITHUB_TOKEN` | Reads private repositories for import and attach. Used to commit only with `QUORUM_GITHUB_WRITE=1` or `QUORUM_GITHUB_CLI=1`. |
+| `QUORUM_GITHUB_WRITE` | `1` lets the token commit. |
+| `QUORUM_GITHUB_CLI` | `1` turns committing on using `gh auth token`. `QUORUM_GITHUB_TOKEN` wins if both are set. |
+| `QUORUM_GITHUB_REPOS` | Optional comma-separated `owner/repo` list that commits are limited to. A list with no valid entry allows none. |
+
+### Limits
+
+- Saving, committing and attaching take at most 20 files of 200 KB each. Attached files can total 60,000 characters in a meeting.
+- File paths are relative, up to 200 characters and 8 levels, with no `..`, backslashes, or names starting with a dot (so no `.git`, `.env` or `.github`), and no `node_modules`. Types: html, css, js, mjs, ts, tsx, jsx, json, md, txt, py, sql, svg, yaml, yml, toml, go, rs, java, kt, swift, rb, sh. Files without one of these extensions, such as `Dockerfile` or images, cannot be saved or committed.
+- Models see up to 60,000 characters of file contents per turn: the latest version of each proposed file, and the attachments. A file that does not fit is named without its contents.
+- A reply with files can be 120,000 characters. Ollama and OpenAI-compatible agents are allowed 8,000 output tokens and a turn 290 seconds; a file cut off by a limit is shown but cannot be saved. Ollama's context window grows up to 32,768 tokens for these turns, which needs more memory. The optional `--profile hf` server has a 4,096-token context, too small for file work unless you raise `--ctx-size`. An endpoint that rejects 8,000 tokens needs the switch turned off.
+- The workspace list shows up to 500 text files and skips hidden entries, `node_modules` and links.
+- Committed files are ordinary, non-executable files. Quorum commits whole files; it cannot delete or rename them.
+
+### Security model
+
+- **Agents get no tools, shell or write access from Quorum.** A model returns text. Files are read out of that text, and you approve every save and every commit.
+- **Treat proposed files as untrusted.** Imported skills, attached files and earlier messages can all steer what an agent writes. Read each file before using it. Saving runs nothing, but running a saved file does. A pull request branch in your own repository can trigger its existing workflows, with their secrets, before you merge: for example through a changed `package.json` script.
+- **Paths** are checked on the server. Writes stay inside the workspace folder, symbolic links below it are refused, and existing files are replaced only after you confirm. The folder itself may be a link, since you choose it.
+- **Previews** are sent with a sandboxing Content-Security-Policy, so a page cannot run scripts, make requests or reach Quorum. A link you click in a preview can still leave for another site.
+- **GitHub credentials** stay in the server: they are not sent to the browser, written to logs or errors, or passed to the Claude and Codex processes. Commits go only to `api.github.com`.
+- **Codex is the exception.** Its read-only sandbox can read files on your computer, which may include saved credentials. Do not give untrusted instructions to a Codex agent.
+- **The local API has no login.** The Host and same-origin checks stop other websites, not other programs on this computer: while committing is on, any of them could use it. Limit the token and `QUORUM_GITHUB_REPOS`, and turn it off when you are done.
+
 ## Importing agents and skills
 
 **Included skills.** The [`skills`](skills/README.md) folder holds 249 third-party `SKILL.md` files (MIT and Apache-2.0) gathered from the sources in a Snyk article on skills for founders. Open the import window's **Included skills** tab to add them to an agent; identical copies are listed once. Read the folder's notes on sources, limits and trust.
@@ -183,7 +246,7 @@ Node.js 24+ is required (built-in SQLite); running the app needs no npm dependen
 - **Skills** are `SKILL.md` files, added to the agent you choose.
 - **Claude on this computer** lists `~/.claude/agents`, `~/.claude/skills` and `~/.claude/plugins` (override with `CLAUDE_AGENTS_DIR` and `CLAUDE_SKILLS_DIR`). A Docker install cannot see your home folder, so run natively for this.
 
-Public repositories need no account; set `QUORUM_GITHUB_TOKEN` (a read-only token) for private ones or for a higher request limit. Only Markdown text is imported, up to 32,000 characters per file; scripts and linked files are not, and agents cannot run tools. Imported text becomes an agent's instructions and is sent to its model provider, so import only what you trust. Codex can read local files from its sandbox, so be especially careful with unfamiliar files on Codex agents. Long instructions can overflow a small local model's context.
+Public repositories need no account; set `QUORUM_GITHUB_TOKEN` for private ones or for a higher request limit. A read-only token is enough for importing; [committing](#committing-to-github) is switched on separately. Only Markdown text is imported, up to 32,000 characters per file; scripts and linked files are not, and agents cannot run tools. Imported text becomes an agent's instructions and is sent to its model provider, so import only what you trust. Codex can read local files from its sandbox, so be especially careful with unfamiliar files on Codex agents. Long instructions can overflow a small local model's context.
 
 ## Tagging and repetition
 

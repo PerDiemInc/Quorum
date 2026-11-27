@@ -1,7 +1,7 @@
 import { createServer } from "node:http";
 import { timingSafeEqual } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { normalizeAgent } from "../src/engine.ts";
+import { canCreateFiles, normalizeAgent } from "../src/engine.ts";
 import type { Prompt } from "../src/engine.ts";
 import { respond } from "../src/providers.ts";
 import { checkCLI } from "../src/models.ts";
@@ -45,7 +45,6 @@ const server = createServer(async (req, res) => {
   res.once("close", () => {
     if (!res.writableFinished) abort.abort();
   });
-  const signal = AbortSignal.any([abort.signal, AbortSignal.timeout(180_000)]);
   try {
     const parts: Buffer[] = [];
     let length = 0;
@@ -72,6 +71,9 @@ const server = createServer(async (req, res) => {
     if (busy) return json(409, { error: "A host CLI turn is already running" });
     busy = true;
     try {
+      // Writing whole files takes longer than a spoken turn.
+      const limit = canCreateFiles(agent) ? 290_000 : 180_000;
+      const signal = AbortSignal.any([abort.signal, AbortSignal.timeout(limit)]);
       const text = await respond(agent, data.prompt as Prompt, signal);
       if (!res.destroyed) json(200, { text });
     } finally {

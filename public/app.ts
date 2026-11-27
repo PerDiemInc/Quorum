@@ -14,11 +14,15 @@ import {
   findMentions,
   addParticipant,
   MAX_PARTICIPANTS,
+  canCreateFiles,
+  splitFiles,
+  turnContext,
 } from "/engine.js";
 import type { Agent, Meeting, Message, Provider, Skill, State } from "/engine.js";
 import { createImport } from "/import.js";
 import type { ImportedProfile } from "/import.js";
 import { createMentions } from "/mentions.js";
+import { createFiles } from "/files.js";
 
 /** What /api/config reports. */
 interface Config {
@@ -76,12 +80,14 @@ interface Elements {
   "agent-dialog": HTMLDialogElement;
   "agent-form": Form<{
     name: HTMLInputElement;
+    createFiles: HTMLInputElement;
     provider: HTMLSelectElement;
     model: HTMLInputElement;
     voice: HTMLSelectElement;
     skills: HTMLInputElement;
   }>;
   "agent-search": HTMLInputElement;
+  attach: HTMLButtonElement;
   "create-agent": HTMLDialogElement;
   "history-search": HTMLInputElement;
   "install-model-form": Form<{ model: HTMLInputElement }>;
@@ -140,11 +146,13 @@ async function request<T>(
         }),
   });
   const json: unknown = await res.json();
-  if (!res.ok)
-    throw Object.assign(
-      new Error((json as { error?: string }).error ?? "HTTP " + res.status),
-      { status: res.status },
-    );
+  if (!res.ok) {
+    const refused = json as { error?: string; conflicts?: string[] };
+    throw Object.assign(new Error(refused.error ?? "HTTP " + res.status), {
+      status: res.status,
+      conflicts: refused.conflicts,
+    });
+  }
   return json as T;
 }
 function save() {
@@ -257,6 +265,31 @@ function syncChoices() {
     el.dataset.selected = String(el.querySelector("input")!.checked);
 }
 document.addEventListener("change", syncChoices);
+/** HeroUI switch markup around a native input. */
+function toggle(text: string, checked: boolean, change: (checked: boolean) => void) {
+  const label = node("label", undefined, "switch"),
+    input = node("input", undefined, "choice-input"),
+    content = node("span", undefined, "switch__content"),
+    control = node("span", undefined, "switch__control"),
+    name = node("span", text);
+  input.type = "checkbox";
+  input.setAttribute("role", "switch");
+  input.checked = checked;
+  input.addEventListener("change", () => change(input.checked));
+  name.dataset.slot = "label";
+  control.append(node("span", undefined, "switch__thumb"));
+  content.append(control, name);
+  label.append(input, content);
+  label.dataset.selected = String(checked);
+  return label;
+}
+/** The "Can create files" choice for one agent, in the library or in a meeting. */
+function filesToggle(agent: Agent) {
+  return toggle("Can create files", canCreateFiles(agent), (files) => {
+    agent.files = files;
+    void save();
+  });
+}
 /** Mark one tab or toggle in a HeroUI tab list as chosen. */
 function setSelected(el: HTMLElement, selected: boolean) {
   el.dataset.selected = String(selected);
@@ -460,12 +493,12 @@ function renderTeam() {
       head = node("div", undefined, "participant__head"),
       info = agentInfo(a, modelLabel(a)),
       settings = node("details", undefined, "participant__settings"),
-      toggle = node("summary", "Settings", "button button--ghost button--sm");
+      summary = node("summary", "Settings", "button button--ghost button--sm");
     card.dataset.agent = a.id;
     card.classList.toggle("active", speaker?.id === a.id);
     info.append(node("small", a.voice ? voiceName(a.voice).split(" · ")[0] + " voice" : ""));
     head.append(avatar(a.name), info);
-    toggle.setAttribute("aria-label", a.name + " settings");
+    summary.setAttribute("aria-label", a.name + " settings");
     settings.open = openSettings.has(a.id);
     settings.addEventListener("toggle", () => {
       if (settings.open) openSettings.add(a.id);
@@ -515,13 +548,16 @@ function renderTeam() {
       field("Model (blank for automatic)", model),
       field("Voice", voice),
     ];
+    const writes = filesToggle(a);
+    writes.classList.add("files-switch");
+    writes.querySelector("input")!.disabled = current.status === "accepted";
     const ask = button("Tag @", () => mentions.insert(a), "ghost");
     ask.classList.add("tag-agent");
     ask.setAttribute("aria-label", "Tag " + a.name + " in your message");
     ask.disabled = current.status === "accepted";
     const actions = node("div", undefined, "actions participant__actions");
     actions.append(ask, remove);
-    settings.append(toggle, ...fields);
+    settings.append(summary, ...fields, writes);
     card.append(head, actions, settings);
     $("team").append(card);
   }
@@ -667,6 +703,9 @@ function renderTranscript() {
         "play button button--ghost button--sm button--icon-only",
       ) as PlayButton;
     meta.append(node("strong", m.speaker));
+    const { prose, blocks } = splitFiles(m.text);
+    // Words go in the bubble; each file gets a card of its own.
+    const said = blocks.length ? prose : m.text;
     if (m.model) meta.append(node("span", m.model));
     if (m.at)
       meta.append(
@@ -682,8 +721,13 @@ function renderTranscript() {
     listen.message = m;
     listen.addEventListener("click", () => void play(m));
     showPlayState(listen);
-    line.append(bubble(m.text), listen);
-    content.append(meta, line);
+    line.append(bubble(said), listen);
+    content.append(meta);
+    if (said) content.append(line);
+    if (blocks.length) {
+      row.classList.add("has-files");
+      content.append(files.cards(m, blocks));
+    }
     row.append(avatar(m.speaker), content);
     $("transcript").append(row);
   }
@@ -715,6 +759,15 @@ const mentions = createMentions({
   list: $("mention-list"),
   people: () => current?.participants ?? [],
   show: (a) => [avatar(a.name), agentInfo(a, modelLabel(a))],
+});
+const files = createFiles({
+  node,
+  button,
+  checkbox,
+  chip,
+  request,
+  meeting: () => current,
+  save: () => void save(),
 });
 /** The message being read aloud from its play button, if any. */
 let playback: { message: Message; ctrl: AbortController } | null = null;
@@ -797,6 +850,11 @@ function renderStatus(message = "") {
   for (const ask of $("team").querySelectorAll<HTMLButtonElement>(".tag-agent"))
     ask.disabled = current.status === "accepted";
   $("invite-more").disabled = current.status === "accepted";
+  for (const input of $("team").querySelectorAll<HTMLInputElement>(".files-switch input"))
+    input.disabled = current.status === "accepted";
+  for (const remove of $("attachments").querySelectorAll("button"))
+    remove.disabled = current.status === "accepted";
+  $("attach").disabled = current.status === "accepted";
   $("record").disabled = current.status === "accepted" || !config.whisper;
   $("message-form").querySelector<HTMLButtonElement>("button[type=submit]")!.disabled =
     current.status === "accepted" || Boolean(recording);
@@ -840,6 +898,7 @@ function openMeeting(m: Meeting) {
   error();
   renderTeam();
   renderTranscript();
+  files.renderAttachments();
   renderStatus();
   renderHistory();
 }
@@ -1038,15 +1097,7 @@ async function run(asked?: string[]) {
       [...($("team").children as HTMLCollectionOf<HTMLElement>)]
         .find((el) => el.dataset.agent === agent.id)
         ?.classList.add("active");
-      const context = {
-        goal: m.goal,
-        description: m.description,
-        agenda: m.agenda,
-        participants: m.participants.map((p) => ({ name: p.name })),
-        transcript: m.transcript
-          .slice(-30)
-          .map((x) => ({ speaker: x.speaker, text: x.text.slice(0, 4000) })),
-      };
+      const context = turnContext(m);
       let result;
       try {
         result = await requestTurn({ agent, meeting: context }, signal);
@@ -1131,6 +1182,8 @@ $("agent-form").addEventListener("submit", async (e) => {
       voice: data.get("voice"),
       instructions: data.get("instructions"),
       skills,
+      // Left unset, the rule in canCreateFiles keeps applying.
+      files: filesChosen ? f.elements.createFiles.checked : undefined,
     });
     state.agents.push(agent);
     assignVoices(state.agents);
@@ -1138,6 +1191,8 @@ $("agent-form").addEventListener("submit", async (e) => {
     renderPendingSkills();
     f.reset();
     resetAgentModel();
+    filesChosen = false;
+    syncChoices();
     $("create-agent").close();
     renderAgents();
     await save();
@@ -1145,6 +1200,19 @@ $("agent-form").addEventListener("submit", async (e) => {
     // The toast sits behind an open dialog, so say it inside.
     $("create-status").textContent = (e as Error).message;
   }
+});
+/** Whether the host has set the files switch of the agent being created. */
+let filesChosen = false;
+/** Until then, the switch shows what the name and skills would give. */
+function suggestFiles() {
+  const { name, createFiles } = $("agent-form").elements;
+  if (!filesChosen)
+    createFiles.checked = canCreateFiles({ name: name.value, skills: pendingSkills });
+  syncChoices();
+}
+$("agent-form").elements.name.addEventListener("input", suggestFiles);
+$("agent-form").elements.createFiles.addEventListener("change", () => {
+  filesChosen = true;
 });
 $("agent-form").elements.provider.addEventListener("change", (e) => {
   // A model name from another provider is never carried over.
@@ -1339,6 +1407,7 @@ async function init() {
 /** Skills imported for the agent that is still being created. */
 let pendingSkills: Skill[] = [];
 function renderPendingSkills() {
+  suggestFiles();
   $("new-agent-skills").replaceChildren(
     ...pendingSkills.map((skill) => {
       const item = node("li");
@@ -1400,6 +1469,7 @@ async function addImportedAgents(profiles: ImportedProfile[], provider: string) 
         voice: existing?.voice ?? "",
         instructions: profile.instructions,
         skills: mergeSkills(existing?.skills ?? [], profile.skills),
+        files: existing?.files,
       }),
       source: profile.source,
       importedName: profile.name,
@@ -1563,6 +1633,7 @@ function viewAgent(agent: Agent) {
   const detail = (title: string, text: string) =>
     $("agent-detail").append(node("h3", title), node("p", text));
   detail("MODEL", modelLabel(agent));
+  $("agent-detail").append(filesToggle(agent));
   detail("INSTRUCTIONS", agent.instructions || "No instructions.");
   if (agent.source) detail("IMPORTED FROM", agent.source);
   detail("VOICE", agent.voice ? voiceName(agent.voice) : "Default local voice");
@@ -1777,6 +1848,7 @@ $("starter-team").addEventListener("click", async () => {
     if (current) {
       renderTeam();
       renderTranscript();
+      files.renderAttachments();
       renderStatus();
     }
     await save();

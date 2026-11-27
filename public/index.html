@@ -99,13 +99,10 @@
                 placeholder="e.g. How do we turn our first 100 users into our biggest fans?"
               ></textarea>
             </label>
-            <details class="setup-details">
-              <summary class="button button--secondary button--sm">Add a description or agenda</summary>
-              <div class="grid-two">
-                <label class="field"><span class="label">Meeting description</span><textarea class="textarea textarea--secondary textarea--full-width" name="description" maxlength="8000" rows="3" placeholder="Background the agents should know"></textarea></label>
-                <label class="field"><span class="label">Agenda</span><textarea class="textarea textarea--secondary textarea--full-width" name="agenda" maxlength="8000" rows="3" placeholder="Topics to cover, in order"></textarea></label>
-              </div>
-            </details>
+            <div class="grid-two">
+              <label class="field"><span class="label">Meeting description <span class="muted">(optional)</span></span><textarea class="textarea textarea--secondary textarea--full-width" name="description" maxlength="8000" rows="3" placeholder="Background the agents should know"></textarea></label>
+              <label class="field"><span class="label">Agenda <span class="muted">(optional)</span></span><textarea class="textarea textarea--secondary textarea--full-width" name="agenda" maxlength="8000" rows="3" placeholder="Topics to cover, in order"></textarea></label>
+            </div>
             <fieldset>
               <legend class="label">Invite agents</legend>
               <div class="filter-bar">
@@ -210,6 +207,7 @@
               </div>
               <form id="message-form">
                 <label for="message" class="label">Join the conversation</label>
+                <ul id="attachments" aria-label="Attached files"></ul>
                 <div class="composer">
                   <ul id="mention-list" class="list-box popover" role="listbox" aria-label="Agents to tag" hidden></ul>
                   <textarea
@@ -224,6 +222,10 @@
                     aria-expanded="false"
                   ></textarea>
                   <div class="actions end">
+                    <button id="attach" type="button" class="button button--tertiary button--sm">
+                      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11.5 12.5 19a5 5 0 0 1-7-7l8-8a3.3 3.3 0 0 1 4.7 4.7l-8 8a1.7 1.7 0 0 1-2.4-2.4L15 7" /></svg>
+                      Attach files
+                    </button>
                     <button id="record" type="button" class="button button--tertiary button--sm">
                       <svg viewBox="0 0 24 24" aria-hidden="true">
                         <rect x="9" y="3.5" width="6" height="11" rx="3" />
@@ -351,6 +353,13 @@
           <label class="field"><span class="label">Model</span><input class="input input--secondary input--full-width" name="model" placeholder="Auto (or type a model name)" /></label>
         </div>
         <label class="field"><span class="label">Voice</span><select class="input input--secondary input--full-width" name="voice"></select></label>
+        <label class="switch" data-selected="false"
+          ><input class="choice-input" type="checkbox" role="switch" name="createFiles" /><span class="switch__content"
+            ><span class="switch__control"><span class="switch__thumb"></span></span
+            ><span data-slot="label">Can create files</span></span
+          ></label
+        >
+        <p class="muted small">The agent proposes files as text. You approve every save and commit.</p>
         <div class="skill-picker">
           <button type="button" class="button button--secondary button--sm" id="new-agent-import">Import skills</button>
           <ul id="new-agent-skills" aria-label="Imported skills"></ul>
@@ -416,6 +425,85 @@
         and is sent to its model. Scripts and linked files are not imported.
       </p>
       <button id="import-add" type="button" class="button button--primary button--full-width" disabled>Add</button>
+    </dialog>
+
+    <dialog id="attach-dialog" class="modal__dialog" aria-labelledby="attach-title">
+      <header class="dialog-head">
+        <h2 id="attach-title" class="modal__heading">Attach files</h2>
+        <button id="attach-close" type="button" class="close-button close-button--default" aria-label="Close">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17" /></svg>
+        </button>
+      </header>
+      <p class="muted small">Every agent in this meeting can read an attached file, and it is sent to their model providers.</p>
+      <h3>Workspace folder</h3>
+      <p id="attach-root" class="muted small"></p>
+      <input id="attach-search" class="input input--secondary input--full-width" type="search" placeholder="Search files" aria-label="Search workspace files" />
+      <div id="attach-list" class="pick-list"></div>
+      <button id="attach-add" type="button" class="button button--primary button--full-width" disabled>Attach selected</button>
+      <form id="attach-github" class="inline-form">
+        <label class="field"
+          ><span class="label">Or one file on GitHub</span
+          ><input class="input input--secondary input--full-width" name="url" maxlength="500" placeholder="https://github.com/owner/repo/blob/main/README.md"
+        /></label>
+        <button type="submit" class="button button--secondary">Attach</button>
+      </form>
+      <p id="attach-status" class="status" role="status"></p>
+    </dialog>
+
+    <dialog id="save-dialog" class="modal__dialog" aria-labelledby="save-title">
+      <header class="dialog-head">
+        <h2 id="save-title" class="modal__heading">Save to folder</h2>
+        <button id="save-close" type="button" class="close-button close-button--default" aria-label="Close">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17" /></svg>
+        </button>
+      </header>
+      <form id="save-form">
+        <label class="field"
+          ><span class="label">Folder name</span
+          ><input class="input input--secondary input--full-width" name="folder" maxlength="100" required autocomplete="off"
+        /></label>
+        <p class="muted small">Saved in its own folder inside your Quorum workspace. Nothing is run.</p>
+        <ul id="save-files" class="file-list" aria-label="Files to save"></ul>
+        <p id="save-status" class="status" role="status"></p>
+        <ul id="save-result" class="file-list" aria-label="Saved files"></ul>
+        <button id="save-submit" type="submit" class="button button--primary button--full-width">Save files</button>
+      </form>
+    </dialog>
+
+    <dialog id="commit-dialog" class="modal__dialog" aria-labelledby="commit-title">
+      <header class="dialog-head">
+        <h2 id="commit-title" class="modal__heading">Commit to GitHub</h2>
+        <button id="commit-close" type="button" class="close-button close-button--default" aria-label="Close">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17" /></svg>
+        </button>
+      </header>
+      <p id="commit-check" class="status" role="status"></p>
+      <div id="commit-setup" class="notice" hidden>
+        <p><strong>Committing is off.</strong> To turn it on, restart Quorum with one of these:</p>
+        <ul>
+          <li><code>QUORUM_GITHUB_TOKEN</code> with <code>QUORUM_GITHUB_WRITE=1</code>: a fine-grained token for the repository with Contents and Pull requests write access.</li>
+          <li><code>QUORUM_GITHUB_CLI=1</code>: use your <code>gh auth login</code> session.</li>
+        </ul>
+        <p><code>QUORUM_GITHUB_REPOS</code> can limit which repositories are written to.</p>
+      </div>
+      <form id="commit-form" hidden>
+        <label class="field"
+          ><span class="label">Repository</span
+          ><input class="input input--secondary input--full-width" name="repo" maxlength="140" required placeholder="owner/name" autocomplete="off" autocapitalize="off" spellcheck="false" pattern="\s*[A-Za-z0-9][A-Za-z0-9\-]*/[A-Za-z0-9._\-]+\s*"
+        /></label>
+        <p id="commit-allowed" class="muted small"></p>
+        <label class="field"><span class="label">Commit message</span><textarea class="textarea textarea--secondary textarea--full-width" name="message" maxlength="5000" rows="2" required></textarea></label>
+        <h3>Files in this commit</h3>
+        <ul id="commit-files" class="file-list" aria-label="Files to commit"></ul>
+        <p class="notice">
+          This opens a pull request from a new branch. Existing branches are not changed.
+          In a public repository the files become public. Read them first: workflows
+          already in the repository may run them.
+        </p>
+        <p id="commit-status" class="status" role="status"></p>
+        <a id="commit-link" class="button button--secondary" target="_blank" rel="noopener noreferrer" hidden></a>
+        <button id="commit-submit" type="submit" class="button button--primary button--full-width">Commit and open pull request</button>
+      </form>
     </dialog>
 
     <div id="alert" class="alert alert--danger" role="alert">

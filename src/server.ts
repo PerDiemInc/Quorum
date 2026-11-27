@@ -6,7 +6,7 @@ import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
-import { normalizeAgent } from "./engine.ts";
+import { canCreateFiles, normalizeAgent } from "./engine.ts";
 import type { State } from "./engine.ts";
 import { freshTurn } from "./turn.ts";
 import type { TurnMeeting } from "./turn.ts";
@@ -26,6 +26,14 @@ import {
   listGitHub,
   readGitHub,
 } from "./import.ts";
+import {
+  listWorkspace,
+  readWorkspace,
+  saveToWorkspace,
+  readPreview,
+  PREVIEW_HEADERS,
+} from "./workspace.ts";
+import { githubStatus, commitToGitHub, readGitHubFile } from "./github.ts";
 
 const port = Number(process.env.PORT ?? 4710);
 if (!Number.isInteger(port) || port < 1 || port > 65535)
@@ -49,6 +57,7 @@ const assets = new Map<string, [file: string, type: string]>([
   ["/engine.js", ["../src/engine.ts", "text/javascript; charset=utf-8"]],
   ["/import.js", ["import.ts", "text/javascript; charset=utf-8"]],
   ["/mentions.js", ["mentions.ts", "text/javascript; charset=utf-8"]],
+  ["/files.js", ["files.ts", "text/javascript; charset=utf-8"]],
 ]);
 // Docker listens on its network interface; the published port stays loopback-only.
 const host: string = process.env.QUORUM_HOST ?? "127.0.0.1";
@@ -89,6 +98,8 @@ async function parseJSON(req: IncomingMessage, limit = 2_000_000): Promise<unkno
     throw Object.assign(new Error("Invalid JSON"), { status: 400 });
   }
 }
+// Twenty files of 200 KB, with room for JSON escaping.
+const FILES_REQUEST_LIMIT = 10_000_000;
 let activeTurn = false;
 const server = createServer(async (req, res) => {
   res.setHeader("x-content-type-options", "nosniff");
@@ -135,7 +146,8 @@ const server = createServer(async (req, res) => {
         JSON.parse(storedState() ?? '{"agents":[],"meetings":[]}'),
       );
     if (req.method === "PUT" && path === "/api/state") {
-      const data = (await parseJSON(req, 12_000_000)) as Partial<State> | null;
+      // Meetings keep the files agents proposed, so the workspace can grow large.
+      const data = (await parseJSON(req, 50_000_000)) as Partial<State> | null;
       if (!Array.isArray(data?.agents) || !Array.isArray(data?.meetings))
         return json(res, 400, { error: "Invalid state" });
       // Reject stale browser snapshots rather than silently losing another tab's edits.
@@ -183,6 +195,35 @@ const server = createServer(async (req, res) => {
       };
       return json(res, 200, await readGitHub(data.url, data.paths, signal));
     }
+    if (req.method === "GET" && path === "/api/workspace")
+      return json(res, 200, await listWorkspace());
+    if (req.method === "POST" && path === "/api/workspace/read") {
+      const data = (await parseJSON(req, 20_000)) as { paths?: unknown } | null;
+      return json(res, 200, await readWorkspace(data?.paths));
+    }
+    if (req.method === "POST" && path === "/api/workspace/save") {
+      const data = await parseJSON(req, FILES_REQUEST_LIMIT);
+      return json(res, 200, await saveToWorkspace(Object(data)));
+    }
+    if (req.method === "GET" && path.startsWith("/preview/")) {
+      // Set first, so a refusal is just as isolated as a page.
+      for (const [name, value] of Object.entries(PREVIEW_HEADERS)) res.setHeader(name, value);
+      const { type, content } = await readPreview(path.slice("/preview/".length));
+      res.writeHead(200, { "content-type": type });
+      res.end(content);
+      return;
+    }
+    if (req.method === "GET" && path === "/api/github")
+      return json(res, 200, githubStatus());
+    if (req.method === "POST" && path === "/api/github/commit") {
+      const data = await parseJSON(req, FILES_REQUEST_LIMIT);
+      // Not tied to the page: leaving halfway could strand a branch without its pull request.
+      return json(res, 200, await commitToGitHub(Object(data), AbortSignal.timeout(60_000)));
+    }
+    if (req.method === "POST" && path === "/api/github/file") {
+      const data = (await parseJSON(req, 2000)) as { url?: unknown } | null;
+      return json(res, 200, await readGitHubFile(data?.url, signal));
+    }
     if (req.method === "GET" && path === "/api/models")
       return json(res, 200, await modelSettings());
     if (req.method === "POST" && path === "/api/models/pull") {
@@ -204,7 +245,7 @@ const server = createServer(async (req, res) => {
         return json(res, 409, {
           error: "Another model turn is still running. Try again shortly.",
         });
-      const data = (await parseJSON(req)) as {
+      const data = (await parseJSON(req, FILES_REQUEST_LIMIT)) as {
         agent?: unknown;
         meeting?: Partial<TurnMeeting>;
       };
@@ -219,10 +260,14 @@ const server = createServer(async (req, res) => {
         return json(res, 409, { error: "Another model turn is running" });
       activeTurn = true;
       try {
-        const model = await chooseModel(agent, signal);
+        // Writing whole files takes longer than a spoken turn.
+        const turn = canCreateFiles(agent)
+          ? AbortSignal.any([abort.signal, AbortSignal.timeout(290_000)])
+          : signal;
+        const model = await chooseModel(agent, turn);
         // The goal, transcript and participants were checked above.
         const meeting = data.meeting as TurnMeeting;
-        const result = await freshTurn({ ...agent, model }, meeting, signal);
+        const result = await freshTurn({ ...agent, model }, meeting, turn);
         if (!abort.signal.aborted)
           return json(res, 200, { ...result, model });
       } finally {
@@ -254,9 +299,13 @@ const server = createServer(async (req, res) => {
     }
     return json(res, 404, { error: "Not found" });
   } catch (error) {
-    const err = error as Error & { status?: number };
+    const err = error as Error & { status?: number; conflicts?: string[] };
     if (!res.destroyed && !res.headersSent)
-      json(res, err.status ?? 400, { error: err.message || "Request failed" });
+      json(res, err.status ?? 400, {
+        error: err.message || "Request failed",
+        // Files a save would replace, so the page can ask first.
+        ...(err.conflicts ? { conflicts: err.conflicts } : {}),
+      });
     else if (!res.destroyed) res.end();
   }
 });

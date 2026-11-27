@@ -2,7 +2,33 @@ import { spawn } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { canCreateFiles, MAX_FILE_REPLY_CHARS, MAX_REPLY_CHARS } from "./engine.ts";
 import type { Agent, MeetingContext, Prompt } from "./engine.ts";
+
+// Output room for a spoken turn, and for one that carries whole files.
+const TURN_TOKENS = 700;
+const FILE_TOKENS = 8000;
+const LOCAL_WINDOW = 8192;
+const LARGEST_LOCAL_WINDOW = 32_768;
+// Secrets that a model CLI has no use for and a prompt must not be able to read.
+const PRIVATE_VARIABLES = [
+  "QUORUM_GITHUB_TOKEN",
+  "GITHUB_TOKEN",
+  "GH_TOKEN",
+  "QUORUM_CLI_BRIDGE_TOKEN",
+  "QUORUM_OPENAI_KEY",
+];
+function modelEnvironment() {
+  const env = { ...process.env };
+  for (const name of PRIVATE_VARIABLES) delete env[name];
+  return env;
+}
+/** Enough window for the prompt and the reply, so a local model does not drop its instructions. */
+function localWindow(prompt: Prompt, tokens: number) {
+  // About three characters to a token, rounded up to the next 4096.
+  const needed = Math.ceil((prompt.system.length + prompt.user.length) / 3) + tokens;
+  return Math.min(LARGEST_LOCAL_WINDOW, Math.max(LOCAL_WINDOW, Math.ceil(needed / 4096) * 4096));
+}
 
 /** CLAUDE_BIN covers a claude that is not on the server's PATH. */
 export const cliBin = (command: string) =>
@@ -14,11 +40,12 @@ interface RunOptions {
   signal?: AbortSignal;
   maxBytes?: number;
   includeStderr?: boolean;
+  env?: NodeJS.ProcessEnv;
 }
 export function runProcess(
   command: string,
   args: string[],
-  { input, cwd, signal, maxBytes = 2_000_000, includeStderr = false }: RunOptions = {},
+  { input, cwd, signal, maxBytes = 2_000_000, includeStderr = false, env }: RunOptions = {},
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
@@ -27,6 +54,7 @@ export function runProcess(
     }
     const child = spawn(command, args, {
       cwd,
+      env,
       signal,
       shell: false,
       stdio: ["pipe", "pipe", "pipe"],
@@ -128,7 +156,8 @@ function endpoint(base: string, path: string) {
 }
 /** @param options a later attempt asks local models for more variety */
 export async function respond(
-  agent: Pick<Agent, "name" | "provider" | "model">,
+  agent: Pick<Agent, "name" | "provider" | "model" | "category" | "files"> &
+    Partial<Pick<Agent, "skills">>,
   prompt: Prompt,
   signal?: AbortSignal,
   { attempt = 0 }: { attempt?: number } = {},
@@ -137,6 +166,9 @@ export async function respond(
     { role: "system", content: prompt.system },
     { role: "user", content: prompt.user },
   ];
+  // Only an agent that creates files gets the room to write them.
+  const writes = canCreateFiles(agent);
+  const tokens = writes ? FILE_TOKENS : TURN_TOKENS;
   let answer: unknown;
   switch (agent.provider) {
     case "demo": {
@@ -155,11 +187,12 @@ export async function respond(
           messages,
           stream: false,
           options: {
-            num_predict: 700,
+            num_predict: tokens,
             // The default window can cut off the instructions of a long meeting.
-            num_ctx: 8192,
+            num_ctx: writes || prompt.hasFiles ? localWindow(prompt, tokens) : LOCAL_WINDOW,
             temperature: 0.8 + attempt * 0.2,
-            repeat_penalty: 1.15,
+            // Code repeats itself by nature, so a strong penalty would damage files.
+            repeat_penalty: writes ? 1.05 : 1.15,
             repeat_last_n: 512,
           },
         },
@@ -177,10 +210,10 @@ export async function respond(
         {
           model: agent.model,
           messages,
-          max_tokens: 700,
+          max_tokens: tokens,
           stream: false,
           temperature: 0.8 + attempt * 0.2,
-          frequency_penalty: 0.5,
+          frequency_penalty: writes ? 0 : 0.5,
         },
         signal,
         process.env.QUORUM_OPENAI_KEY,
@@ -231,7 +264,7 @@ export async function respond(
               '{"mcpServers":{}}',
               ...(agent.model ? ["--model", agent.model] : []),
             ],
-            { cwd, input: "Meeting data:\n" + prompt.user, signal },
+            { cwd, input: "Meeting data:\n" + prompt.user, signal, env: modelEnvironment() },
           );
         } else {
           answer = await runProcess(
@@ -249,6 +282,7 @@ export async function respond(
               cwd,
               input: prompt.system + "\n\nMeeting data:\n" + prompt.user,
               signal,
+              env: modelEnvironment(),
             },
           );
         }
@@ -262,5 +296,5 @@ export async function respond(
   }
   if (typeof answer !== "string" || !answer.trim())
     throw new Error("The model returned no text");
-  return answer.trim().slice(0, 16000);
+  return answer.trim().slice(0, writes ? MAX_FILE_REPLY_CHARS : MAX_REPLY_CHARS);
 }

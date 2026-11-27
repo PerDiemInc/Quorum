@@ -1,4 +1,14 @@
-import { findRepeat, makePrompt, withoutRepeatedSentences } from "./engine.ts";
+import {
+  canCreateFiles,
+  extractFiles,
+  findRepeat,
+  latestFiles,
+  makePrompt,
+  projectFiles,
+  splitFiles,
+  withFileMarkers,
+  withoutRepeatedSentences,
+} from "./engine.ts";
 import { respond } from "./providers.ts";
 import type { Agent, Message, MeetingContext, Prompt } from "./engine.ts";
 
@@ -23,22 +33,40 @@ export async function freshTurn(
   ask: Ask = respond,
 ): Promise<{ text: string } | { skipped: true }> {
   const prompt = makePrompt(agent, meeting);
-  let repeated: Message | false | null = null;
+  const proposed = latestFiles(meeting.transcript, meeting.proposed);
+  // What each file holds now; a proposal replaces an attachment of the same path.
+  const known = new Map(
+    [...projectFiles(meeting.attachments), ...proposed].map((f) => [f.path, comparable(f.content)]),
+  );
+  let repeated: Message | null = null;
   for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
     const text = withoutRepeatedSentences(
       await ask(
         agent,
-        repeated ? nudge(agent, meeting, repeated) : prompt,
+        // The files stay known when the retry shows less of the transcript.
+        repeated ? nudge(agent, { ...meeting, proposed }, repeated) : prompt,
         signal,
         { attempt },
       ),
     );
     // Demo replies are fixed placeholders, so there is nothing better to ask for.
-    repeated = agent.provider !== "demo" && findRepeat(text, meeting.transcript);
+    if (agent.provider === "demo") return { text };
+    const files = canCreateFiles(agent) ? extractFiles(text) : [];
+    // A new or changed file is new work, however familiar the summary sounds.
+    if (files.some((f) => known.get(f.path) !== comparable(f.content))) return { text };
+    repeated =
+      findRepeat(text, meeting.transcript) ??
+      // Nothing but files that are already there.
+      (files.length && !splitFiles(text).prose
+        ? (meeting.transcript.findLast((m) => m.speaker !== "Host" && m.speaker !== "Quorum") ?? null)
+        : null);
     if (!repeated) return { text };
   }
   return { skipped: true };
 }
+
+/** Line endings and trailing space do not make a file different. */
+const comparable = (content: string) => content.replace(/\r\n/g, "\n").trimEnd();
 
 /** The same request without the message being copied, and saying why it was refused. */
 function nudge(agent: Agent, meeting: TurnMeeting, repeated: Message): Prompt {
@@ -54,7 +82,7 @@ function nudge(agent: Agent, meeting: TurnMeeting, repeated: Message): Prompt {
     system:
       prompt.system +
       "\n\nYour last draft was refused because it repeated this earlier message: " +
-      JSON.stringify(repeated.text.slice(0, 600)) +
+      JSON.stringify(withFileMarkers(repeated.text).slice(0, 600)) +
       " Do not say that again in any wording. Take a clearly different angle: challenge it, name a risk, give a specific example, propose the next action with an owner, or ask the host one new question.",
   };
 }
