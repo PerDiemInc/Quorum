@@ -1,0 +1,352 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Quorum: put your AI team in a room</title>
+<meta name="description" content="Quorum is a local-first meeting room where AI agents debate your goal out loud, in their own voices. Only you can accept the outcome.">
+<meta property="og:title" content="Quorum: put your AI team in a room">
+<meta property="og:description" content="AI agents debate your goal out loud, in their own voices. You make the call.">
+<meta property="og:image" content="screenshots/meeting.webp">
+<meta name="theme-color" content="#000000">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='6' r='4' fill='%23b678ff'/%3E%3Ccircle cx='6' cy='17' r='4' fill='%2322c8ff'/%3E%3Ccircle cx='18' cy='17' r='4' fill='%23ff8a3d'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;600;800&display=swap" rel="stylesheet">
+<style>
+:root {
+  --void: #000;
+  --carbon: #101014;
+  --paper: #f5f5f7;
+  --ink: #1d1d1f;
+  --haze: #a1a1aa;
+  /* One color per voice in the room. */
+  --host: #22c8ff;
+  --lead: #ff8a3d;
+  --design: #b678ff;
+  --ops: #ff4d8d;
+  --finance: #2ef2a6;
+  --display: "Unbounded", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --text: -apple-system, BlinkMacSystemFont, "SF Pro Text", Inter, "Segoe UI", sans-serif;
+  --pad: clamp(20px, 5vw, 64px);
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; scroll-padding-top: 56px; }
+body { margin: 0; background: var(--void); color: var(--paper); font: 17px/1.55 var(--text); -webkit-font-smoothing: antialiased; overflow-x: clip; }
+h1, h2, h3, p { margin: 0; }
+h1, h2 { font-family: var(--display); text-wrap: balance; }
+h2 { font-size: clamp(32px, 5.4vw, 72px); font-weight: 600; line-height: 1.08; letter-spacing: -.035em; }
+h3 { font-size: 21px; line-height: 1.3; letter-spacing: -.01em; }
+img { display: block; max-width: 100%; height: auto; }
+a { color: inherit; }
+:focus-visible { outline: 3px solid var(--host); outline-offset: 3px; }
+.skip { position: absolute; left: 12px; top: -60px; z-index: 30; padding: 8px 16px; border-radius: 99px; background: #fff; color: #000; }
+.skip:focus { top: 8px; }
+
+nav { position: sticky; top: 0; z-index: 20; display: flex; align-items: center; justify-content: space-between; gap: 16px; height: 52px; padding: 0 var(--pad); background: #000b; backdrop-filter: saturate(180%) blur(20px); -webkit-backdrop-filter: saturate(180%) blur(20px); font-size: 13px; }
+nav .brand { font-family: var(--display); font-weight: 600; font-size: 15px; text-decoration: none; }
+nav ul { display: flex; gap: 28px; margin: 0; padding: 0; list-style: none; }
+nav ul a { color: #d4d4d8; text-decoration: none; }
+nav ul a:hover { color: #fff; }
+
+.button { display: inline-flex; align-items: center; justify-content: center; gap: 10px; min-height: 48px; min-width: 200px; padding: 12px 28px; border: 0; border-radius: 99px; font: 600 15px/1 var(--text); text-decoration: none; cursor: pointer; transition: transform .2s ease, background-color .2s ease; }
+.button:hover { transform: translateY(-1px); }
+.button:active { transform: scale(.97); }
+.button.solid { background: #fff; color: #000; }
+.button.glass { background: #ffffff1c; color: #fff; backdrop-filter: blur(12px); }
+.button.glass:hover { background: #ffffff2e; }
+.button.small { min-height: 30px; min-width: 0; padding: 6px 14px; font-size: 12px; }
+.actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 14px; }
+
+/* Hero: the table is the product, shown speaking. */
+.hero { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; min-height: calc(100svh - 52px); padding: clamp(24px, 4svh, 64px) var(--pad) 36px; text-align: center; isolation: isolate; }
+.hero::before { content: ""; position: absolute; inset: 0; z-index: -1; background: radial-gradient(60% 45% at 50% 62%, color-mix(in oklab, var(--speaker, var(--host)) 34%, transparent), transparent 70%); transition: background .6s ease; }
+h1 { font-size: clamp(46px, min(9.6vw, 12.5svh), 160px); font-weight: 800; line-height: .98; letter-spacing: -.055em; }
+.lede { max-width: 34em; color: #d4d4d8; font-size: clamp(18px, 2vw, 23px); line-height: 1.45; text-wrap: balance; }
+
+.stage { position: relative; width: min(820px, 100%, max(480px, 72svh)); aspect-ratio: 16 / 9; margin-top: 22px; }
+.ring { position: absolute; left: 50%; top: 50%; width: 78%; height: 68%; translate: -50% -50%; border-radius: 50%; border: 1px solid #ffffff2b; box-shadow: 0 0 80px #ffffff0d inset; }
+.ring::after { content: ""; position: absolute; inset: -1px; border-radius: 50%; padding: 2px; background: conic-gradient(from var(--turn, 0deg), transparent 0 70%, var(--speaker, var(--host)) 90%, transparent); -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude; animation: orbit 7s linear infinite; }
+@property --turn { syntax: "<angle>"; inherits: false; initial-value: 0deg; }
+@keyframes orbit { to { --turn: 360deg; } }
+.wave { position: absolute; left: 50%; top: 50%; translate: -50% -50%; display: flex; align-items: center; gap: clamp(2px, .5vw, 5px); height: 34%; }
+.wave i { width: clamp(3px, .7vw, 6px); height: 6%; border-radius: 99px; background: var(--speaker, var(--host)); transition: height .09s linear, background-color .4s ease; }
+.seat { --c: var(--host); position: absolute; display: flex; flex-direction: column; align-items: center; gap: 16px; translate: -50% -50%; padding: 0; border: 0; background: none; color: #fff; font: 600 13px/1.2 var(--text); cursor: pointer; white-space: nowrap; }
+.orb { display: grid; place-items: center; width: clamp(48px, min(9vw, 8.5svh), 84px); aspect-ratio: 1; border-radius: 50%; background: radial-gradient(circle at 32% 28%, #fff, var(--c) 38%, color-mix(in oklab, var(--c), #000 62%) 100%); box-shadow: 0 0 24px color-mix(in oklab, var(--c) 45%, transparent); transition: transform .35s cubic-bezier(.3, 1.6, .5, 1), box-shadow .35s ease; }
+.seat:hover .orb { transform: scale(1.07); }
+.seat[aria-pressed="true"] .orb { transform: scale(1.16); box-shadow: 0 0 0 4px #000, 0 0 0 6px var(--c), 0 0 60px var(--c); }
+.seat:nth-of-type(1) { left: 50%; top: 88%; }
+.seat:nth-of-type(2) { left: 11%; top: 62%; }
+.seat:nth-of-type(3) { left: 24%; top: 15%; }
+.seat:nth-of-type(4) { left: 76%; top: 15%; }
+.seat:nth-of-type(5) { left: 89%; top: 62%; }
+.caption { width: min(760px, 100%); min-height: 6.6em; margin-top: 26px; }
+.caption strong { display: block; margin-bottom: 4px; color: var(--speaker, var(--host)); font-size: 14px; }
+.caption p { color: #e4e4e7; font-size: clamp(15px, 1.3vw, 17px); }
+
+.shot { margin: 0 auto; width: min(1280px, 100%); border-radius: clamp(12px, 2vw, 28px); overflow: hidden; border: 1px solid #ffffff24; box-shadow: 0 40px 120px #0009; background: var(--carbon); }
+.reveal { padding: 0 var(--pad) clamp(64px, 10vw, 140px); perspective: 1400px; }
+@supports (animation-timeline: view()) {
+  @media (prefers-reduced-motion: no-preference) {
+    .reveal .shot { animation: lift linear both; animation-timeline: view(); animation-range: entry 0% cover 42%; transform-origin: 50% 0; }
+  }
+}
+@keyframes lift { from { transform: rotateX(24deg) scale(.86); filter: saturate(.4) brightness(.6); } to { transform: none; filter: none; } }
+
+section.chapter { display: flex; flex-direction: column; align-items: center; gap: 20px; padding: clamp(80px, 12vw, 160px) var(--pad); text-align: center; }
+.chapter > p { max-width: 36em; font-size: clamp(18px, 1.9vw, 22px); text-wrap: balance; }
+.light { background: var(--paper); color: var(--ink); }
+.light > p { color: #55555c; }
+.dark > p { color: var(--haze); }
+.light .shot { border-color: #0000001a; box-shadow: 0 30px 80px #0000002e; }
+.pair { display: grid; grid-template-columns: 1.35fr 1fr; gap: 24px; align-items: end; width: min(1280px, 100%); margin-top: 36px; }
+figure { margin: 0; }
+figcaption { padding-top: 14px; font-size: 15px; opacity: .75; }
+
+.split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr); gap: clamp(28px, 5vw, 72px); align-items: center; width: min(1200px, 100%); margin-top: 40px; text-align: left; }
+.steps { display: flex; flex-direction: column; gap: 28px; margin: 0; padding: 0; list-style: none; counter-reset: step; }
+.steps li { counter-increment: step; position: relative; padding-left: 58px; }
+.steps li::before { content: counter(step); position: absolute; left: 0; top: 0; display: grid; place-items: center; width: 40px; height: 40px; border-radius: 50%; font: 600 15px var(--display); background: var(--c); color: #000; }
+.steps p { color: var(--haze); font-size: 16px; }
+code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: .92em; }
+
+.bento { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 16px; width: min(1200px, 100%); margin-top: 36px; text-align: left; }
+.tile { display: flex; flex-direction: column; gap: 10px; justify-content: flex-end; min-height: 230px; padding: 28px; border-radius: 28px; background: #fff; overflow: hidden; }
+.tile p { color: #55555c; font-size: 16px; }
+.tile.third { min-height: 170px; }
+.tile.wide { grid-column: span 3; }
+.tile.third { grid-column: span 2; }
+.tile.night { background: var(--void); color: #fff; }
+.tile.night p { color: #c4c4cc; }
+.tile.spectrum { background: conic-gradient(from 210deg at 80% 0%, var(--host), var(--design), var(--ops), var(--lead), var(--finance), var(--host)); color: #000; }
+.tile.spectrum p { color: #111; }
+.big { font: 800 clamp(40px, 5vw, 68px)/1 var(--display); letter-spacing: -.04em; margin-bottom: auto; }
+
+.devices { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 1fr); gap: 32px; align-items: center; width: min(1180px, 100%); margin-top: 36px; }
+.phone { justify-self: center; width: min(290px, 100%); border: 10px solid #1c1c1f; border-radius: 46px; overflow: hidden; box-shadow: 0 30px 80px #000c, 0 0 0 1px #ffffff33; }
+
+.terminal { width: min(760px, 100%); margin-top: 28px; border-radius: 20px; background: var(--carbon); border: 1px solid #ffffff1f; text-align: left; overflow: hidden; }
+.terminal header { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 16px 12px 22px; border-bottom: 1px solid #ffffff17; font-size: 13px; color: var(--haze); }
+.terminal pre { margin: 0; padding: 22px; overflow-x: auto; font: 14px/1.9 ui-monospace, "SF Mono", Menlo, monospace; color: #e4e4e7; }
+.fine { max-width: 46em; font-size: 14px !important; }
+footer { padding: 40px var(--pad) 56px; border-top: 1px solid #ffffff1a; color: var(--haze); font-size: 13px; text-align: center; }
+
+@media (max-width: 860px) {
+  nav ul { display: none; }
+  .pair, .split, .devices { grid-template-columns: minmax(0, 1fr); }
+  .tile.wide, .tile.third { grid-column: span 6; }
+  .stage { width: 100%; aspect-ratio: 1 / .92; }
+  .seat { font-size: 12px; }
+  .seat:nth-of-type(2) { left: 13%; }
+  .seat:nth-of-type(5) { left: 87%; }
+  .wave { height: 24%; }
+  .wave i:nth-child(n+19) { display: none; }
+  .caption { min-height: 14em; }
+}
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  .ring::after { animation: none; }
+  .orb, .button, .wave i { transition: none; }
+}
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<nav aria-label="Main">
+  <a class="brand" href="#main">Quorum</a>
+  <ul>
+    <li><a href="#room">The room</a></li>
+    <li><a href="#import">Import a team</a></li>
+    <li><a href="#local">Your models</a></li>
+    <li><a href="#start">Run it</a></li>
+  </ul>
+  <a class="button solid small" href="https://github.com/PerDiemInc/Quorum">Get the code</a>
+</nav>
+
+<main id="main">
+  <header class="hero" id="hero">
+    <h1>Let them argue.</h1>
+    <p class="lede">Quorum seats your AI specialists around one goal. They take turns, out loud, each in a voice of its own. You decide when it is settled.</p>
+
+    <div class="stage" role="group" aria-label="A demo meeting. Choose a speaker to hear them.">
+      <div class="ring" aria-hidden="true"></div>
+      <div class="wave" id="wave" aria-hidden="true"></div>
+      <button class="seat" type="button" data-line="0" style="--c: var(--host)" aria-pressed="false"><span class="orb"></span>You</button>
+      <button class="seat" type="button" data-line="1" style="--c: var(--lead)" aria-pressed="false"><span class="orb"></span>Product Lead</button>
+      <button class="seat" type="button" data-line="2" style="--c: var(--design)" aria-pressed="false"><span class="orb"></span>Designer</button>
+      <button class="seat" type="button" data-line="3" style="--c: var(--ops)" aria-pressed="false"><span class="orb"></span>Operations</button>
+      <button class="seat" type="button" data-line="4" style="--c: var(--finance)" aria-pressed="false"><span class="orb"></span>Finance</button>
+    </div>
+    <div class="caption" aria-live="polite">
+      <strong id="who">You</strong>
+      <p id="said">We have a quiet corner for a return bin and one dishwasher. Where do we start?</p>
+    </div>
+    <div class="actions">
+      <button class="button solid" type="button" id="play">Hear the meeting</button>
+      <a class="button glass" href="#start">Run it yourself</a>
+    </div>
+  </header>
+
+  <div class="reveal" id="room">
+    <div class="shot"><img src="screenshots/meeting.webp" width="2000" height="1250" alt="A Quorum meeting about a reusable cup program, with replies from Product Lead, Designer, Operations and Finance"></div>
+  </div>
+
+  <section class="chapter light">
+    <h2>Everyone gets a turn. You get the last one.</h2>
+    <p>Agents build on each other and push back, one at a time. Pause, type or talk, remove someone from the call, then continue. Nothing is accepted until you say so.</p>
+    <div class="pair">
+      <figure>
+        <div class="shot"><img src="screenshots/voice.webp" width="2000" height="1250" loading="lazy" alt="Voice mode with a tile for each agent and one highlighted as speaking"></div>
+        <figcaption>Voice rooms: push to talk, then listen to the replies.</figcaption>
+      </figure>
+      <figure>
+        <div class="shot"><img src="screenshots/setup.webp" width="2000" height="1250" loading="lazy" alt="Starting a meeting by writing a goal and inviting agents"></div>
+        <figcaption>Write a goal, invite who matters, start.</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section class="chapter dark" id="import">
+    <h2>Paste a link. Meet your team.</h2>
+    <p>Point Quorum at a GitHub repository and it fetches the agent profiles and skills inside, including ones written for Claude Code.</p>
+    <div class="split">
+      <ol class="steps">
+        <li style="--c: var(--host)"><h3>Paste a GitHub address</h3><p>A repository, a folder or a single file.</p></li>
+        <li style="--c: var(--design)"><h3>Check what it found</h3><p>Preview any profile or skill before it joins.</p></li>
+        <li style="--c: var(--finance)"><h3>Add them</h3><p>Each new agent gets a model and a voice. Import again to update them.</p></li>
+      </ol>
+      <div class="shot"><img src="screenshots/import.webp" width="2000" height="1250" loading="lazy" alt="The import window listing 19 agent profiles found in a public GitHub repository"></div>
+    </div>
+    <p class="fine">Imported text becomes an agent's instructions, so add only files you trust. Scripts are never imported or run.</p>
+  </section>
+
+  <section class="chapter light" id="local">
+    <h2>Bring your own brains.</h2>
+    <p>Mix models in one room, and swap any of them in the middle of a meeting.</p>
+    <div class="bento">
+      <article class="tile wide night"><span class="big">Local</span><h3>Ollama and llama.cpp</h3><p>Open models answer on your own machine. Nothing in those turns leaves it.</p></article>
+      <article class="tile wide spectrum"><span class="big">26</span><h3>Neural voices</h3><p>Kokoro speaks every agent differently, on your computer. It needs a local image with the model.</p></article>
+      <article class="tile third"><h3>Claude Code</h3><p>Uses the login you already have. Meeting context is sent to Anthropic.</p></article>
+      <article class="tile third"><h3>ChatGPT through Codex</h3><p>Uses your Codex login. Meeting context is sent to OpenAI.</p></article>
+      <article class="tile third"><h3>Whisper</h3><p>Turns your voice into text locally, so you can read it before you send it.</p></article>
+    </div>
+  </section>
+
+  <section class="chapter dark">
+    <h2>Looks good at midnight. And at noon.</h2>
+    <p>Dark by default, light when you want it, comfortable on a narrow screen.</p>
+    <div class="devices">
+      <div class="shot"><img src="screenshots/light.webp" width="2000" height="1250" loading="lazy" alt="The meeting room in light mode"></div>
+      <div class="phone"><img src="screenshots/phone.webp" width="780" height="1688" loading="lazy" alt="A meeting transcript on a phone-sized screen"></div>
+    </div>
+  </section>
+
+  <section class="chapter dark" id="start">
+    <h2>Yours in four lines.</h2>
+    <p>With Docker running, this starts Quorum with a local model.</p>
+    <div class="terminal">
+      <header><span>Terminal</span><button class="button glass small" type="button" id="copy">Copy commands</button></header>
+      <pre><code id="commands">git clone https://github.com/PerDiemInc/Quorum.git &amp;&amp; cd Quorum
+docker compose up -d --build
+docker compose exec ollama ollama pull qwen2.5:3b
+open http://127.0.0.1:4710</code></pre>
+    </div>
+    <p class="fine">To use your Claude Code or Codex logins and the natural voices, run the server natively with Node 24. The README explains how.</p>
+    <div class="actions"><a class="button solid" href="https://github.com/PerDiemInc/Quorum#readme">Read the README</a></div>
+  </section>
+</main>
+
+<footer>Quorum is MIT licensed. Screenshots and audio show a made-up demo meeting with real model replies and synthetic voices.</footer>
+
+<script>
+const LINES = [{"who":"Host","voice":"am_adam","text":"We have a quiet corner for a return bin and one dishwasher. Where do we start?","src":"assets/audio/1-host.mp3","seconds":4.4,"levels":[2,78,95,92,44,77,6,11,81,90,69,63,58,3,2,12,69,70,68,54,59,31,2,41,69,75,60,50,57,5,15,66,74,64,59,37,10,93,76,57,37,42,43,49,54,67,67,54,46,15,73,44,20,8,51,53,23,16,15,28,20,7,1,0,0,0,0,0,0,0,0,33,99,54,76,48,59,29,8,4,93,69,44,22,12,1,2,0]},{"who":"Product Lead","voice":"af_heart","text":"Start with a two-week deposit pilot: 50 cups, regulars only, returns to the corner bin, washed after the rush. Regulars benefit on each repeat visit; we cut disposables. I'd propose success as 70% returns and no slower service. Free wins if deposits deter sign-ups. Operations, can the dishwasher absorb 50 daily?","src":"assets/audio/2-product-lead.mp3","seconds":22.1,"levels":[0,1,5,91,82,63,21,53,23,53,10,3,10,10,51,66,59,38,71,59,19,6,1,44,8,8,24,51,52,23,30,27,1,7,14,29,17,13,17,12,3,0,0,0,0,0,0,0,0,0,3,77,25,3,68,31,12,19,63,57,20,1,4,1,1,0,13,63,75,34,67,68,54,61,50,10,20,47,78,72,76,66,52,50,42,23,4,5,60,35,11,12,68,75,77,63,2,5,41,49,7,11,41,77,66,68,46,12,44,33,28,22,25,21,4,0,19,39,81,99,92,47,15,16,5,25,56,27,3,23,31,35,25,42,50,25,9,15,15,16,2,0,1,1,1,0,0,0,0,0,42,92,71,28,96,63,70,74,43,17,4,70,72,74,52,3,34,46,26,17,46,50,20,7,65,58,7,14,10,27,44,3,9,36,44,14,7,41,26,7,28,27,17,1,0,0,0,0,0,58,37,13,33,69,13,1,33,17,4,1,41,51,55,41,21,34,15,17,10,10,1,1,0,0,0,0,0,0,0,0,0,51,86,29,10,69,14,9,53,74,65,32,2,32,27,9,2,48,61,46,28,1,8,32,48,10,1,1,8,81,52,51,76,59,38,7,52,29,2,55,43,10,27,36,6,10,33,37,36,37,39,43,4,13,43,57,51,54,54,60,31,3,2,27,49,44,40,35,19,2,20,42,36,9,20,10,5,1,1,1,0,0,0,0,0,0,0,0,2,4,67,76,87,59,77,82,72,59,50,58,38,15,35,20,2,28,37,7,10,35,63,64,24,43,44,4,2,1,34,26,7,7,38,37,17,1,34,36,32,32,22,20,11,3,3,2,1,1,0,0,0,0,0,0,0,0,0,51,92,56,24,65,77,67,57,21,15,56,54,58,49,21,1,0,0,0,0,0,5,58,84,80,24,71,59,25,11,51,65,46,22,18,38,42,35,26,32,7,2,2,43,44,46,25,5,1,30,53,4,2,31,51,18,46,30,23,15,17,11,8,5,0,0]},{"who":"Designer","voice":"am_michael","text":"At 8:15, friction hits at payment: a regular in line must hear about the deposit, decide, and pay extra. Then returns compete for one corner. Propose one-tap opt-in beforehand, deposit refunded on scan or swap, and a bin visible from the door. Operations, who empties it mid-rush?","src":"assets/audio/3-designer.mp3","seconds":20.46,"levels":[0,0,26,61,48,15,49,87,44,14,1,0,0,1,3,71,27,3,2,19,29,27,20,12,3,4,4,55,36,3,25,26,26,25,13,30,41,4,4,21,17,2,8,12,30,31,25,10,4,1,0,0,0,0,0,1,1,1,1,31,56,25,40,83,64,16,55,42,36,32,27,25,27,29,27,33,36,38,41,31,31,28,29,30,30,11,4,3,12,21,23,31,14,32,32,12,5,14,15,24,1,9,8,18,32,42,25,10,22,5,2,17,18,7,6,31,28,36,34,26,21,16,23,25,14,9,18,27,23,7,18,29,9,8,27,8,4,15,9,2,0,0,0,0,0,0,0,0,1,0,0,6,73,99,64,42,38,36,1,24,22,49,45,44,39,23,14,6,25,26,6,11,20,19,7,3,4,29,22,23,30,24,23,7,10,24,52,50,41,16,6,4,2,0,0,0,0,0,0,0,1,1,0,24,49,4,21,83,73,60,36,17,15,35,50,44,40,5,10,32,39,38,4,4,0,36,43,46,2,1,24,29,28,16,24,5,3,30,42,40,29,14,21,25,19,13,13,11,1,1,1,3,36,7,12,12,23,36,43,29,12,33,9,5,22,24,4,2,12,36,30,29,22,28,17,26,26,27,20,8,11,10,3,23,26,29,30,35,31,22,20,21,16,21,25,7,19,55,62,61,25,10,2,1,1,1,1,1,8,36,46,32,14,7,39,52,48,40,37,20,12,44,46,12,30,16,17,26,15,5,4,24,24,22,20,10,19,52,61,42,19,6,2,1,0,0,0,0,0,0,0,0,0,0,0,30,84,91,26,6,42,27,39,39,34,22,24,19,18,7,4,4,9,2,1,1,0,0,1,35,22,1,36,59,45,4,0,14,21,19,10,32,18,7,22,30,34,20,9,18,39,35,8,2,6,13,17,6,0,0]},{"who":"Operations","voice":"bf_emma","text":"Fifty cups is roughly two or three extra racks, likely fine after the rush if we hold enough stock to cover unwashed returns. Mid-rush, nobody empties the bin, so size it for the whole peak. Proposed effort: 20 minutes per shift. What's the dishwasher's cycle time and rack capacity?","src":"assets/audio/4-operations.mp3","seconds":16.41,"levels":[0,3,90,38,3,42,18,10,44,75,31,2,1,36,20,18,81,21,3,28,32,2,5,37,59,57,52,22,3,18,56,48,17,44,33,4,7,4,26,46,21,63,63,47,27,4,0,5,2,1,0,1,1,0,0,0,27,89,82,10,18,52,24,2,40,78,69,62,52,46,52,18,2,17,20,47,26,86,57,13,20,21,24,2,38,27,16,55,67,54,23,45,44,47,15,3,2,1,36,69,29,1,4,7,18,9,39,49,20,57,57,24,45,47,42,42,52,15,15,13,4,31,5,9,46,47,37,26,23,20,8,1,1,0,0,0,0,0,0,0,0,0,0,0,58,99,35,32,90,96,49,15,18,22,22,53,63,66,25,39,50,44,53,49,14,4,26,36,9,1,40,13,45,61,58,36,29,16,4,1,25,62,34,3,2,52,58,62,56,11,54,36,3,3,26,45,19,22,62,59,36,5,5,22,44,27,8,0,4,0,0,0,0,0,0,0,0,0,0,35,41,5,57,87,91,58,12,45,78,21,2,22,41,15,2,2,0,0,0,7,60,72,41,26,57,69,60,48,12,1,2,3,33,26,19,28,42,60,17,3,2,1,3,0,0,0,0,0,0,0,0,0,0,0,12,77,59,2,2,3,50,26,78,24,19,18,55,21,25,37,21,2,2,48,62,48,5,22,40,11,6,30,50,49,41,35,34,33,36,27,63,53,5,1,8,16,11,37,21,2,10,20,2,16,31,21,7,0,0]},{"who":"Finance","voice":"bm_george","text":"Per cup used, compare deposit-program cost (cup price divided by uses before loss, plus washing and labor) against one disposable. Twenty labor minutes per shift could erase savings. Propose stopping if pilot cost per use exceeds disposable after two weeks, or returns fall below 70%. What are cup, disposable, and hourly wage costs?","src":"assets/audio/5-finance.mp3","seconds":22.72,"levels":[0,82,61,16,89,70,7,13,71,77,70,60,61,51,29,3,2,0,0,0,52,91,56,35,97,64,61,42,56,49,4,37,66,48,60,38,7,0,12,72,62,51,33,65,53,43,41,18,10,79,54,36,14,7,3,2,0,0,0,0,0,0,7,82,41,2,0,9,69,52,57,45,6,3,70,50,63,49,55,48,59,45,31,50,44,46,51,58,62,28,7,59,49,22,8,57,29,3,56,54,51,53,56,49,45,34,6,6,5,1,0,0,0,0,6,75,65,30,8,45,63,52,25,31,64,63,50,51,56,57,58,58,56,36,45,37,15,0,0,0,0,0,0,54,67,81,78,59,17,3,45,72,58,54,53,41,51,11,8,4,67,62,66,40,47,27,29,26,19,6,0,0,0,0,0,0,0,0,12,81,72,44,64,57,57,56,51,48,56,63,57,55,44,10,7,3,27,82,48,27,24,52,68,49,9,2,3,2,0,0,1,71,75,73,64,57,64,58,54,59,38,5,6,52,62,64,45,35,31,21,16,13,5,3,0,0,0,0,0,0,0,0,4,95,38,90,75,62,62,49,11,11,4,64,36,3,61,54,48,23,50,10,1,4,34,52,52,54,47,14,1,9,58,71,51,21,5,2,1,62,71,65,66,55,12,46,29,8,6,18,69,56,58,46,29,9,4,56,32,9,3,44,57,62,59,44,58,37,52,38,22,42,43,6,10,48,15,14,52,70,51,54,67,61,37,7,7,9,6,2,1,1,1,0,0,1,63,80,77,59,21,14,99,69,56,51,52,37,9,2,29,64,57,52,53,43,63,56,53,51,35,5,6,60,49,45,57,35,50,45,5,62,36,5,25,74,44,24,9,4,1,0,0,0,0,0,0,0,0,0,67,68,74,36,2,10,66,65,31,2,0,1,0,0,0,0,1,73,44,10,6,6,72,63,69,52,54,60,44,58,56,40,4,0,0,45,76,16,10,56,58,58,58,54,58,58,50,57,56,50,42,27,24,2,10,59,32,20,5,1,1,4,5,1,0]}];
+const hero = document.getElementById("hero");
+const seats = [...document.querySelectorAll(".seat")];
+const wave = document.getElementById("wave");
+const playButton = document.getElementById("play");
+const bars = Array.from({ length: 28 }, () => wave.appendChild(document.createElement("i")));
+const colors = ["--host", "--lead", "--design", "--ops", "--finance"];
+const calm = matchMedia("(prefers-reduced-motion: reduce)");
+const audio = new Audio();
+let current = 0, playingAll = false, idle = null, frame = 0;
+
+function show(index) {
+  current = index;
+  const line = LINES[index];
+  hero.style.setProperty("--speaker", "var(" + colors[index] + ")");
+  document.getElementById("who").textContent = line.who === "Host" ? "You" : line.who;
+  document.getElementById("said").textContent = line.text;
+  seats.forEach((seat, i) => seat.setAttribute("aria-pressed", String(i === index)));
+}
+/** Draw the stored loudness of the clip around the current moment. */
+function draw() {
+  const levels = LINES[current].levels;
+  const now = Math.floor(audio.currentTime * 20);
+  bars.forEach((bar, i) => {
+    const level = levels[now - Math.abs(i - 14)] || 0;
+    bar.style.height = 6 + level * 0.94 + "%";
+  });
+  if (!audio.paused) frame = requestAnimationFrame(draw);
+}
+function rest() {
+  cancelAnimationFrame(frame);
+  bars.forEach((bar, i) => (bar.style.height = 6 + 10 * Math.sin((i / 27) * Math.PI) + "%"));
+}
+function stop() {
+  playingAll = false;
+  audio.pause();
+  rest();
+  playButton.textContent = "Hear the meeting";
+}
+async function speak(index, all) {
+  clearInterval(idle);
+  playingAll = all;
+  show(index);
+  audio.src = LINES[index].src;
+  try {
+    await audio.play();
+    playButton.textContent = "Stop";
+    if (!calm.matches) draw();
+  } catch (error) {
+    // Switching speakers interrupts the earlier request; anything else is worth saying.
+    if (error.name !== "AbortError") {
+      stop();
+      document.getElementById("who").textContent = "The audio could not be played here.";
+    }
+  }
+}
+audio.addEventListener("ended", () => {
+  if (playingAll && current + 1 < LINES.length) speak(current + 1, true);
+  else stop();
+});
+playButton.addEventListener("click", () => {
+  if (!audio.paused) stop();
+  else speak(0, true);
+});
+seats.forEach((seat) =>
+  seat.addEventListener("click", () => {
+    const index = Number(seat.dataset.line);
+    if (!audio.paused && index === current) stop();
+    else speak(index, false);
+  }),
+);
+document.getElementById("copy").addEventListener("click", async (event) => {
+  const button = event.currentTarget;
+  try {
+    await navigator.clipboard.writeText(document.getElementById("commands").textContent);
+    button.textContent = "Copied";
+  } catch {
+    button.textContent = "Select and copy";
+  }
+  setTimeout(() => (button.textContent = "Copy commands"), 2000);
+});
+
+if (LINES.length) {
+  show(0);
+  rest();
+  // Until someone presses play, the table quietly shows whose turn it is.
+  if (!calm.matches) idle = setInterval(() => show((current + 1) % LINES.length), 6000);
+}
+</script>
+</body>
+</html>

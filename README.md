@@ -6,17 +6,19 @@ A standalone local-first meeting prototype. Create specialist agents with their 
 
 ## Screenshots
 
-**Meeting setup** with a goal, agent selection, and Chat or Voice mode.
+These use a made-up demo meeting with real model replies.
 
-![Quorum meeting setup with three specialists selected](docs/screenshots/meeting-setup.jpg)
+![A meeting about a reusable cup program with replies from four agents](docs/screenshots/meeting.webp)
 
-**Saved voice meeting** showing the description, agenda, participants, and transcript.
+![Voice mode with a tile for each agent](docs/screenshots/voice.webp)
 
-![Quorum voice meeting with saved context and example replies](docs/screenshots/saved-voice-meeting.jpg)
+![Importing agent profiles from a public GitHub repository](docs/screenshots/import.webp)
 
-**Agent library** with specialist roles and their model settings.
+![The agent library after importing a team](docs/screenshots/team.webp)
 
-![Quorum agent library with four specialist cards](docs/screenshots/agent-library.jpg)
+## Website
+
+[docs/index.html](docs/index.html) is a one-page site for Quorum with the screenshots above and the demo meeting as audio. Open the file in a browser, or serve the `docs` folder with GitHub Pages.
 
 ## Docker quick start (recommended)
 
@@ -128,7 +130,7 @@ npm run services             # model services, published on loopback only
 npm run start:local          # http://127.0.0.1:4711
 ```
 
-This needs Node 24+ and images already built by the Docker quick start. Native data lives in `.quorum/quorum.sqlite`, separate from the Docker `quorum-data` volume. To bring existing data over, stop the `quorum` service and, only if that file does not exist yet, run `docker compose cp quorum:/data/. .quorum/`. To go back to Docker, stop the native server and run `docker compose up -d quorum`; changes made natively are not copied back.
+This needs Node 24+ and Docker; the first run of `npm run services` builds or downloads any missing images. Native data lives in `.quorum/quorum.sqlite`, separate from the Docker `quorum-data` volume. To bring existing data over, stop the `quorum` service and, only if that file does not exist yet, run `docker compose cp quorum:/data/. .quorum/`. To go back to Docker, stop the native server and run `docker compose up -d quorum`; changes made natively are not copied back.
 
 The header shows **Claude ready**, **Claude disabled** or **Claude unavailable**. Claude runs in safe mode (none of your CLAUDE.md, skills, plugins or hooks) with no tools and no saved sessions; set `CLAUDE_BIN` if it is not on the PATH. Each message has a play button that reads it aloud (press again to stop). Playing a message pauses the discussion if **Speak replies** is on.
 
@@ -136,7 +138,7 @@ New agents start on Claude, Codex or Ollama (the first that is connected) with a
 
 The interface is dark by default; **Light mode** in the top bar switches it.
 
-`npm run services` also starts [Kokoro](https://huggingface.co/hexgrad/Kokoro-82M), a neural voice model, from a local image that has `kokoro-onnx` and its model files (`ai-models:cpu` by default; set `KOKORO_IMAGE` for another). It is not downloaded for you. Every agent gets its own voice, which you can change on its card in a meeting; your messages use a separate one. Markdown symbols are removed before speaking.
+`npm run services` also starts [Kokoro](https://huggingface.co/hexgrad/Kokoro-82M), a neural voice model, when there is a local image with `kokoro-onnx` and its model files in `/app/tts-models` (`ai-models:cpu` by default; set `KOKORO_IMAGE` for another). It is not downloaded for you; without it, Quorum reads with your browser's voices. Every agent gets its own voice, which you can change on its card in a meeting; your messages use a separate one. Markdown symbols are removed before speaking.
 
 ## Native quick start
 
@@ -148,6 +150,16 @@ Node.js 24+ is required (built-in SQLite); no npm dependencies. Run `npm start`,
 - **Hugging Face / local models:** serve a downloaded compatible model through llama.cpp, LM Studio, vLLM or another OpenAI-compatible chat server. Set `QUORUM_OPENAI_URL=http://127.0.0.1:8080/v1` and use its model identifier.
 - **Claude Code / Codex:** install and authenticate the respective CLI yourself, then start with `QUORUM_ENABLE_CLI=1 npm start`. Leave the model blank for the automatic choice, or type a supported model name. These clients usually use cloud inference, not offline inference. Claude receives an empty tool list and empty MCP configuration; Codex uses its read-only sandbox. These settings are not a complete isolation boundary: installed CLI configuration, integrations and read access may still apply. Enable only for trusted agents and skills.
 - **Other endpoints:** an OpenAI-compatible provider can use a deliberately configured remote URL and optional `QUORUM_OPENAI_KEY`. This sends conversation and assigned instructions to that service.
+
+## Importing agents and skills
+
+**Agents → Import from GitHub or Claude:** paste a GitHub address and press **Fetch**. Quorum lists the agent profiles and skills it finds; up to 20 agent profiles are preselected, so **Add** turns them into agents (50 at most in one go). Preview any file first.
+
+- **Agent profiles** are Markdown files with a `name` in their front matter and the instructions below it, the format Claude Code subagents use. Quorum looks in `agents/` folders; in a repository without one, or a folder you link to directly, it checks the other Markdown files. A profile's Claude model is kept when the agent runs on Claude, and skills it names are taken from the same repository. Importing a profile again updates that agent.
+- **Skills** are `SKILL.md` files, added to the agent you choose.
+- **Claude on this computer** lists `~/.claude/agents`, `~/.claude/skills` and `~/.claude/plugins` (override with `CLAUDE_AGENTS_DIR` and `CLAUDE_SKILLS_DIR`). A Docker install cannot see your home folder, so run natively for this.
+
+Public repositories need no account; set `QUORUM_GITHUB_TOKEN` (a read-only token) for private ones or for a higher request limit. Only Markdown text is imported, up to 32,000 characters per file; scripts and linked files are not, and agents cannot run tools. Imported text becomes an agent's instructions and is sent to its model provider, so import only what you trust. Codex can read local files from its sandbox, so be especially careful with unfamiliar files on Codex agents. Long instructions can overflow a small local model's context.
 
 ## Voice meetings
 
