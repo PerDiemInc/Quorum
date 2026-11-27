@@ -14,10 +14,15 @@
     "dev": "node --watch src/server.js",
     "test": "node --test",
     "check": "node --check src/server.js && node --check src/providers.js && node --check src/engine.js && node --check src/speech.js && node --check public/app.js && node --check src/models.js && node --check src/agent-templates.js && node --check scripts/cli-bridge.js && node --check scripts/check-models.js && node --check src/turn.js && node --check public/mentions.js && node --check src/import.js && node --check public/import.js && node --check scripts/services.js",
+    "lint": "oxlint --deny-warnings",
+    "lint:py": "uvx ruff@0.17.4 check docker && uvx ruff@0.17.4 format --check docker",
     "check:host": "node scripts/check-host.js",
     "check:models": "node scripts/check-models.js",
     "smoke": "node scripts/smoke.js",
     "bridge:setup": "node scripts/setup-cli-bridge.js",
     "bridge": "node scripts/cli-bridge.js"
+  },
+  "devDependencies": {
+    "oxlint": "1.93.0"
   }
 }

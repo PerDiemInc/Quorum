@@ -233,7 +233,7 @@ export function findMentions(text, participants) {
 export function mentionAt(text, caret) {
   const before = String(text).slice(0, caret);
   const start = before.lastIndexOf('@');
-  if (start < 0 || (start && !/[\s(\[{,;:"']/.test(before[start - 1]))) return null;
+  if (start < 0 || (start && !/[\s([{,;:"']/.test(before[start - 1]))) return null;
   const query = before.slice(start + 1);
   return query.length > 80 || query.includes('\n') ? null : { start, query };
 }

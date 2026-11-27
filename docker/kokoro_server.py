@@ -46,7 +46,9 @@ class Handler(BaseHTTPRequestHandler):
             # British voice ids start with "b".
             language = "en-gb" if voice.startswith("b") else "en-us"
             with lock:
-                samples, rate = kokoro.create(text, voice=voice, speed=1.0, lang=language)
+                samples, rate = kokoro.create(
+                    text, voice=voice, speed=1.0, lang=language
+                )
             audio = io.BytesIO()
             sf.write(audio, samples, rate, format="MP3")
             self.reply(200, audio.getvalue(), "audio/mpeg")

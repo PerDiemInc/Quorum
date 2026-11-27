@@ -2,7 +2,8 @@
 
 **Your AI team. One conversation. One goal.**
 
-**[Visit the Quorum website](docs/index.html)**. It is not published online yet, so this link opens the page's source on GitHub. To see it, run `open docs/index.html` from a clone of this repository.
+[![Quorum on GitHub](https://img.shields.io/badge/GitHub-PerDiemInc%2FQuorum-181717?style=for-the-badge&logo=github&logoColor=white)](https://github.com/PerDiemInc/Quorum)
+[![CI](https://github.com/PerDiemInc/Quorum/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/PerDiemInc/Quorum/actions/workflows/ci.yml)
 
 A standalone local-first meeting prototype. Create specialist agents with their own instructions, multiple Markdown skills and model configuration, invite them to a goal-oriented meeting, and let them discuss until you accept the outcome.
 
@@ -36,7 +37,7 @@ These use a made-up demo meeting with real model replies.
 
 ## Website
 
-[docs/index.html](docs/index.html) is a one-page site for Quorum. Scrolling drives its animation: the demo meeting passes from speaker to speaker, the app screens rise and change, and the demo plays as audio in each agent's voice. Each animated section shows where you are and offers a way past it, and the animation can be turned off on the page. With reduced motion turned on in your system it is a plain scrolling page. Open the file in a browser, or publish the `docs` folder with GitHub Pages.
+[docs/index.html](docs/index.html) is a one-page site for Quorum. Scrolling drives its animation: the demo meeting passes from speaker to speaker, the app screens rise and change, and the demo plays as audio in each agent's voice. Each animated section shows where you are and offers a way past it, and the animation can be turned off on the page. With reduced motion turned on in your system it is a plain scrolling page. GitHub Pages publishes it from the `docs` folder of `master`.
 
 ## Docker quick start (recommended)
 
@@ -160,7 +161,7 @@ The interface is dark by default; **Light mode** in the top bar switches it.
 
 ## Native quick start
 
-Node.js 24+ is required (built-in SQLite); no npm dependencies. Run `npm start`, then open http://127.0.0.1:4710. State is stored in `.quorum/quorum.sqlite` unless `QUORUM_DATA` is set. Container data lives in a separate Docker volume and is not automatically copied from an existing native checkout.
+Node.js 24+ is required (built-in SQLite); running the app needs no npm dependencies. Run `npm start`, then open http://127.0.0.1:4710. State is stored in `.quorum/quorum.sqlite` unless `QUORUM_DATA` is set. Container data lives in a separate Docker volume and is not automatically copied from an existing native checkout.
 
 ## Models
 
@@ -215,7 +216,12 @@ For distinct agent voices, run an OpenAI-compatible Kokoro speech server separat
 
 ## Development
 
+CI lints and tests every push to `master` and every pull request: [Oxlint](https://oxc.rs) for JavaScript, [Ruff](https://docs.astral.sh/ruff/) for the Python speech server, then the syntax check and unit tests.
+
 ```bash
+npm ci            # installs the linter; the app itself needs nothing
+npm run lint
+npm run lint:py   # needs uv
 npm run check
 npm test
 npm run dev

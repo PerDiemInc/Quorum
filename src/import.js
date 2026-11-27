@@ -191,7 +191,9 @@ function scanLibrary() {
   });
 }
 
-const listed = (items) => ({ items: items.map(({ content, ...item }) => item) });
+const listed = (items) => ({
+  items: items.map(({ content: _content, ...item }) => item),
+});
 export const listLocal = async () => listed(await scanLocal());
 export const listLibrary = async () => listed(await scanLibrary());
 
@@ -236,7 +238,7 @@ function checkSelection(items) {
 
 const safeSegment = (part) =>
   // A decoded slash would let one segment smuggle in a path.
-  part && part !== "." && part !== ".." && !/[\u0000-\u001f\\/]/.test(part);
+  part && part !== "." && part !== ".." && !/[\p{Cc}\\/]/u.test(part);
 
 /** Accept owner/repo or a github.com address, optionally pointing at a branch and folder. */
 export function parseGitHubURL(input) {
