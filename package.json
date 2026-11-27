@@ -8,8 +8,16 @@
   },
   "scripts": {
     "start": "node src/server.js",
+    "start:cli": "QUORUM_ENABLE_CLI=1 node src/server.js",
+    "start:local": "PORT=4711 QUORUM_ENABLE_CLI=1 QUORUM_HOST_ACCESS=/dev/null OLLAMA_URL=http://127.0.0.1:11435 QUORUM_OPENAI_URL=http://127.0.0.1:8081/v1 WHISPER_URL=http://127.0.0.1:8001/v1 KOKORO_URL=http://127.0.0.1:8880/v1 node src/server.js",
+    "services": "node scripts/services.js",
     "dev": "node --watch src/server.js",
     "test": "node --test",
-    "check": "node --check src/server.js && node --check src/providers.js && node --check src/engine.js && node --check src/speech.js && node --check public/app.js"
+    "check": "node --check src/server.js && node --check src/providers.js && node --check src/engine.js && node --check src/speech.js && node --check public/app.js && node --check src/models.js && node --check src/agent-templates.js && node --check scripts/cli-bridge.js && node --check scripts/check-models.js && node --check src/import.js && node --check public/import.js && node --check scripts/services.js",
+    "check:host": "node scripts/check-host.js",
+    "check:models": "node scripts/check-models.js",
+    "smoke": "node scripts/smoke.js",
+    "bridge:setup": "node scripts/setup-cli-bridge.js",
+    "bridge": "node scripts/cli-bridge.js"
   }
 }

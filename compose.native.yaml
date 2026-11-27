@@ -1,0 +1,35 @@
+# Publishes the model services on loopback so Quorum can run natively on the Mac.
+# Use with: npm run services, then npm run start:local
+services:
+  ollama:
+    ports: ["127.0.0.1:11435:11434"]
+  inference:
+    ports: ["127.0.0.1:8081:8080"]
+  whisper:
+    ports: ["127.0.0.1:8001:8000"]
+  # Natural neural voices. Needs a local image that has kokoro-onnx and its model files.
+  kokoro:
+    image: ${KOKORO_IMAGE:-ai-models:cpu}
+    pull_policy: never
+    restart: unless-stopped
+    entrypoint: [python, /srv/kokoro_server.py]
+    command: []
+    volumes:
+      - ./docker/kokoro_server.py:/srv/kokoro_server.py:ro
+    ports: ["127.0.0.1:8880:8880"]
+    read_only: true
+    # The speech library loads a temporary copy of espeak, so /tmp must allow it.
+    tmpfs: ["/tmp:exec,size=128m"]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    healthcheck:
+      test:
+        [
+          CMD,
+          python,
+          -c,
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8880/health', timeout=4)",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 6

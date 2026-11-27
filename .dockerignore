@@ -1,0 +1,7 @@
+.git
+.env*
+.quorum
+node_modules
+work
+outputs
+test
