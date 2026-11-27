@@ -2,6 +2,8 @@
 
 **Your AI team. One conversation. One goal.**
 
+**[Visit the Quorum website](docs/index.html)**. It is not published online yet, so this link opens the page's source on GitHub. To see it, run `open docs/index.html` from a clone of this repository.
+
 A standalone local-first meeting prototype. Create specialist agents with their own instructions, multiple Markdown skills and model configuration, invite them to a goal-oriented meeting, and let them discuss until you accept the outcome.
 
 ## Screenshots
