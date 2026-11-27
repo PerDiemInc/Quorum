@@ -64,7 +64,11 @@ async function requestJSON(url, payload, signal, token) {
     body: JSON.stringify(payload),
   });
   if (!response.ok)
-    throw new Error("Model endpoint returned HTTP " + response.status);
+    throw Object.assign(
+      new Error("Model endpoint returned HTTP " + response.status),
+      // A busy endpoint stays distinguishable so the browser can retry the turn.
+      response.status === 409 ? { status: 409 } : {},
+    );
   return response.json();
 }
 function endpoint(base, path) {

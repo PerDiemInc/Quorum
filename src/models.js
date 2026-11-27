@@ -6,6 +6,97 @@ import { runProcess } from "./providers.js";
 let pull = null;
 const ollamaURL = () => process.env.OLLAMA_URL ?? "http://127.0.0.1:11434";
 
+/** Models used for CLI agents that have no pinned model. */
+const cliModels = { claude: "sonnet", codex: "gpt-6.2-sol" };
+// Larger weights are impractically slow, or do not fit, on container CPU inference.
+const AUTO_MAX_BYTES = 8e9;
+const openaiURL = () =>
+  (process.env.QUORUM_OPENAI_URL ?? "http://127.0.0.1:8080/v1").replace(
+    /\/+$/,
+    "",
+  );
+
+/** Read a server-configured model list, or null when it cannot be read. */
+async function listModels(url, key, signal, token) {
+  try {
+    const response = await fetch(url, {
+      signal: AbortSignal.any([signal, AbortSignal.timeout(4000)]),
+      headers: token ? { authorization: "Bearer " + token } : {},
+    });
+    if (!response.ok) return null;
+    const models = (await response.json())[key];
+    return Array.isArray(models) ? models : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Largest local chat model within the size limit, otherwise the smallest one.
+ * Embedding models cannot chat, and cloud models would send meeting data off this machine.
+ */
+function bestOllamaModel(models) {
+  const local = models
+    .filter(
+      (m) =>
+        !m.remote_host &&
+        !/[:-]cloud$/.test(m.name) &&
+        (m.capabilities
+          ? m.capabilities.includes("completion")
+          : !/embed/i.test(m.name)),
+    )
+    .sort((a, b) => b.size - a.size);
+  return (local.find((m) => m.size <= AUTO_MAX_BYTES) ?? local.at(-1))?.name;
+}
+
+/** Decide which model answers a turn. A blank agent model means automatic.
+ * @param {{provider: string, model: string}} agent
+ * @param {AbortSignal} signal
+ * @returns {Promise<string>}
+ */
+export async function chooseModel({ provider, model }, signal) {
+  if (provider === "demo") return "";
+  if (provider === "claude" || provider === "codex")
+    return model || cliModels[provider];
+  if (provider === "ollama") {
+    const installed = await listModels(
+      ollamaURL() + "/api/tags",
+      "models",
+      signal,
+    );
+    if (!installed) {
+      if (model) return model;
+      throw new Error(
+        "Cannot choose a model because Ollama is unavailable. Start it and try again.",
+      );
+    }
+    const tagged = (name) =>
+      name.split("/").at(-1).includes(":") ? name : name + ":latest";
+    // A saved model that is no longer installed falls back to automatic selection.
+    if (model && installed.some((m) => tagged(m.name) === tagged(model)))
+      return model;
+    const best = bestOllamaModel(installed);
+    if (!best)
+      throw new Error(
+        "No local Ollama chat model is installed. Download one in Settings.",
+      );
+    return best;
+  }
+  // Compatible endpoints may serve models they do not list, so keep a pinned name.
+  if (model) return model;
+  const served = await listModels(
+    openaiURL() + "/models",
+    "data",
+    signal,
+    process.env.QUORUM_OPENAI_KEY,
+  );
+  const first = served?.find((m) => !/embed/i.test(m.id))?.id;
+  if (!first)
+    throw new Error(
+      "Cannot choose a model because the compatible endpoint lists none. Check that it is running.",
+    );
+  return first;
+}
+
 /** Probe each provider independently so one offline service cannot hide the others. */
 export async function modelSettings() {
   const probe = async (url) => {
@@ -19,12 +110,7 @@ export async function modelSettings() {
   };
   const [ollama, inference, localClaude, localCodex] = await Promise.all([
     probe(ollamaURL() + "/api/tags"),
-    probe(
-      (process.env.QUORUM_OPENAI_URL ?? "http://127.0.0.1:8080/v1").replace(
-        /\/+$/,
-        "",
-      ) + "/models",
-    ),
+    probe(openaiURL() + "/models"),
     checkCLI("claude"),
     checkCLI("codex"),
   ]);

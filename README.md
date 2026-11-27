@@ -33,11 +33,24 @@ docker compose exec ollama ollama pull qwen2.5:0.5b
 
 Open http://127.0.0.1:4710. If another app uses that port, set `QUORUM_PORT=4711` in `.env` and run Compose again. The app accepts only loopback Host headers and same-origin mutations even though its container listens on `0.0.0.0`. Only the app port is published, bound to **127.0.0.1**. Inference services stay on the private Compose network; the app uses `ollama`, `inference`, and `whisper` service DNS names.
 
-Create an agent using **Ollama (local)** and `qwen2.5:0.5b`, invite it to a meeting, then start the discussion. The built-in Architect and Critic are explicitly labeled demo agents. They do not call an AI model.
+Create an agent using **Ollama (local)**, invite it to a meeting, then start the discussion. The built-in Architect and Critic are explicitly labeled demo agents. They do not call an AI model.
+
+### Automatic model selection
+
+Leave an agent's model blank (the default) and Quorum picks one on every turn. The transcript shows the model that answered.
+
+| Provider | Automatic choice |
+|---|---|
+| Ollama | The largest installed local chat model up to 8 GB, otherwise the smallest. Embedding and cloud models are skipped. |
+| OpenAI-compatible | The first non-embedding model the endpoint lists. |
+| Claude Code | `sonnet` |
+| ChatGPT / Codex | `gpt-6.2-sol` |
+
+Typing a model name pins it. A pinned Ollama model that is no longer installed falls back to the automatic choice. Changing an agent's provider resets it to automatic.
 
 ### Dashboard
 
-- **Meeting room:** set a goal, add an optional description and agenda, invite agents or reuse the last team, run or pause turns, add feedback, and accept the outcome yourself.
+- **Meeting room:** set a goal, add an optional description and agenda, invite agents or reuse the last team, run or pause turns, add feedback, and accept the outcome yourself. **Remove from call** drops an agent at any point before acceptance, even mid-discussion: its unfinished reply is discarded and the others continue. Earlier messages and the agent library are kept, and a meeting keeps at least one agent.
 - **Meeting history:** search by goal, description, agenda, or agent. Reopen a saved room to see its context, participant snapshots, and transcript.
 - **Agents:** create specialists, inspect instructions/skills/model/voice, delete from the library, or restore the most recently deleted agent. Existing meetings retain independent participant snapshots. Deleted agents are retained in SQLite for restoration.
 - **Settings:** list installed Ollama and compatible endpoint models, check provider access, and install an Ollama model by name. Downloads show progress and errors and survive page navigation. One download runs at a time. If the app restarts, run the pull again; Ollama reuses already downloaded layers. A healthy Ollama process does not imply that any model has been pulled.
@@ -89,7 +102,7 @@ npm run check:host
 
 Run this on the Mac, not inside Docker. It writes only capability booleans, CLI versions, and the check time into `.quorum/host/access.json`, which is mounted read-only. Re-run after installing a CLI or changing login. Host detection does **not** grant container access. Authentication status is not a guarantee of model entitlement or a successful model call. The check does not issue paid inference requests.
 
-To use host CLIs without the bridge described below, run Quorum natively with Node 24+ and `QUORUM_ENABLE_CLI=1 npm start` (choose a different `PORT` if Docker is running). Install and authenticate `claude` and `codex` first. Their model names remain manually configurable; CLI authentication does not expose a reliable catalog of entitled models. CLI providers generally use cloud inference.
+To use host CLIs without the bridge described below, run Quorum natively with Node 24+ and `QUORUM_ENABLE_CLI=1 npm start` (choose a different `PORT` if Docker is running). Install and authenticate `claude` and `codex` first. Their automatic model can be overridden per agent; CLI authentication does not expose a reliable catalog of entitled models. CLI providers generally use cloud inference.
 
 ### Validation
 
@@ -111,9 +124,9 @@ Node.js 24+ is required (built-in SQLite); no npm dependencies. Run `npm start`,
 
 ## Models
 
-- **Ollama:** start Ollama, pull a model (e.g. `ollama pull qwen3:8b`) and create an agent with provider Ollama and that model name. Default endpoint: http://127.0.0.1:11434.
+- **Ollama:** start Ollama, pull a model (e.g. `ollama pull qwen3:8b`) and create an agent with provider Ollama; the model is chosen automatically. Default endpoint: http://127.0.0.1:11434.
 - **Hugging Face / local models:** serve a downloaded compatible model through llama.cpp, LM Studio, vLLM or another OpenAI-compatible chat server. Set `QUORUM_OPENAI_URL=http://127.0.0.1:8080/v1` and use its model identifier.
-- **Claude Code / Codex:** install and authenticate the respective CLI yourself, then start with `QUORUM_ENABLE_CLI=1 npm start`. Use a supported model name or leave blank for the CLI default. These clients usually use cloud inference, not offline inference. Claude receives an empty tool list and empty MCP configuration; Codex uses its read-only sandbox. These settings are not a complete isolation boundary: installed CLI configuration, integrations and read access may still apply. Enable only for trusted agents and skills.
+- **Claude Code / Codex:** install and authenticate the respective CLI yourself, then start with `QUORUM_ENABLE_CLI=1 npm start`. Leave the model blank for the automatic choice, or type a supported model name. These clients usually use cloud inference, not offline inference. Claude receives an empty tool list and empty MCP configuration; Codex uses its read-only sandbox. These settings are not a complete isolation boundary: installed CLI configuration, integrations and read access may still apply. Enable only for trusted agents and skills.
 - **Other endpoints:** an OpenAI-compatible provider can use a deliberately configured remote URL and optional `QUORUM_OPENAI_KEY`. This sends conversation and assigned instructions to that service.
 
 ## Voice meetings
@@ -154,7 +167,7 @@ MIT licensed.
 
 ## Specialist team and room modes
 
-**Agents → Add specialist team** adds Developer, Product Manager, Project Manager, Designer, QA, Customer Support, Business Developer, Sales, Marketing and CISO. Each has two focused skills with reviewed references. See [role definitions and sources](docs/agents.md). Pull `qwen2.5:3b` before using these templates; they are independent of the smaller smoke-test model.
+**Agents → Add specialist team** adds Developer, Product Manager, Project Manager, Designer, QA, Customer Support, Business Developer, Sales, Marketing and CISO. Each has two focused skills with reviewed references. See [role definitions and sources](docs/agents.md). These templates choose their model automatically; pull `qwen2.5:3b` or larger, because the smoke-test model is too small for useful role replies.
 
 Choose **Chat** or **Voice** when creating a meeting, or switch inside the room. Voice mode presents participant tiles, a host microphone indicator and a shared transcript. It enables spoken replies but never starts microphone capture automatically. Click **Turn mic on**, speak, then **Stop & transcribe**, review and send. Recording pauses the agents. This is a Zoom-style room layout with push-to-talk, not WebRTC conferencing, continuous listening, barge-in, or live streaming transcription. Browser-local voice availability varies.
 
@@ -174,6 +187,6 @@ docker compose up -d --build quorum
 
 The bridge binds to `127.0.0.1:4712` and permits only the existing Claude/Codex response adapters and capability checks. A random bearer token is stored in ignored `.quorum/bridge/token` and `.env` files with restrictive permissions. The token is available only to the server container, not browser responses. Docker Desktop reaches it through `host.docker.internal`; the models remain on the provider's cloud infrastructure. This is **local CLI access, not local ChatGPT/Claude weights or offline inference**.
 
-Settings performs live bridge authentication checks and enables both CLI providers. Selecting Claude preselects `sonnet`; selecting ChatGPT/Codex preselects `gpt-6.2-sol`. This applies to new agents and provider changes inside meetings. You can edit the model name, or clear it to use the authenticated CLI's default. No claim is made that every model is available on every subscription. Requests may count against your plan or incur provider charges. The bridge must remain running; stopping its terminal disconnects CLI access. No startup daemon is installed.
+Settings performs live bridge authentication checks and enables both CLI providers. With a blank model, Claude agents use `sonnet` and ChatGPT/Codex agents use `gpt-6.2-sol` (see [Automatic model selection](#automatic-model-selection)); type a model name to override. No claim is made that every model is available on every subscription. Requests may count against your plan or incur provider charges. The bridge must remain running; stopping its terminal disconnects CLI access. No startup daemon is installed.
 
 To disable it, stop the bridge, remove `QUORUM_CLI_BRIDGE_URL` and `QUORUM_CLI_BRIDGE_TOKEN` from `.env`, then recreate the app container. To rotate its token, stop the bridge, remove `.quorum/bridge/token`, rerun setup and restart both processes. Never commit or share `.env` or the token. Native CLI configuration may still affect execution; use only trusted role instructions. The bridge is not a general-purpose shell or a complete isolation boundary.

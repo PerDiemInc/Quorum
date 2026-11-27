@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { nextParticipant, canContinue, normalizeAgent, makePrompt } from '../src/engine.js';
+import { nextParticipant, canContinue, normalizeAgent, makePrompt, removeParticipant } from '../src/engine.js';
 test('participants take turns in order and repeat', () => {
   const p = [{name:'A'},{name:'B'}];
   assert.equal(nextParticipant(p,0).name,'A');
@@ -23,7 +23,26 @@ test('model override preserves identity and skill instructions', () => {
   assert.match(first.system,/Evaluate tradeoffs/);
   assert.match(first.user,/Use queues/);
 });
-test('invalid agents and missing model names are rejected',()=>{
+test('invalid agents are rejected and a blank model means automatic',()=>{
   assert.throws(()=>normalizeAgent({name:'',provider:'demo'}));
-  assert.throws(()=>normalizeAgent({name:'A',provider:'ollama'}));
+  assert.equal(normalizeAgent({name:'A',provider:'ollama'}).model,'');
+});
+test('removing a participant keeps the next speaker', () => {
+  const meeting = cursor => ({cursor, participants: ['a','b','c'].map(id => ({id}))});
+  const next = m => nextParticipant(m.participants, m.cursor).id;
+  // Cursor 4 means b is next (or speaking now).
+  for (const [removed, expected] of [['a','b'], ['b','c'], ['c','b']]) {
+    const m = meeting(4);
+    assert.equal(removeParticipant(m, removed).id, removed);
+    assert.equal(next(m), expected);
+  }
+  const last = meeting(2);
+  removeParticipant(last, 'c');
+  assert.equal(next(last), 'a');
+});
+test('unknown participants are ignored and the last one cannot be removed', () => {
+  const m = {cursor: 0, participants: [{id:'a'}]};
+  assert.equal(removeParticipant(m, 'missing'), null);
+  assert.throws(() => removeParticipant(m, 'a'), /at least one/);
+  assert.equal(m.participants.length, 1);
 });

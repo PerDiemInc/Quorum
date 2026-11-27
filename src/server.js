@@ -7,7 +7,7 @@ import { DatabaseSync } from "node:sqlite";
 import { normalizeAgent, makePrompt } from "./engine.js";
 import { respond } from "./providers.js";
 import { transcribe, synthesize } from "./speech.js";
-import { modelSettings, installModel } from "./models.js";
+import { modelSettings, installModel, chooseModel } from "./models.js";
 import { addStarterAgents } from "./agent-templates.js";
 
 const port = Number(process.env.PORT ?? 4710);
@@ -161,12 +161,13 @@ const server = createServer(async (req, res) => {
         return json(res, 409, { error: "Another model turn is running" });
       activeTurn = true;
       try {
+        const model = await chooseModel(agent, signal);
         const text = await respond(
-          agent,
+          { ...agent, model },
           makePrompt(agent, data.meeting),
           signal,
         );
-        if (!abort.signal.aborted) return json(res, 200, { text });
+        if (!abort.signal.aborted) return json(res, 200, { text, model });
       } finally {
         activeTurn = false;
       }
