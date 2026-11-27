@@ -36,7 +36,7 @@ These use a made-up demo meeting with real model replies.
 
 ## Website
 
-[docs/index.html](docs/index.html) is a one-page site for Quorum. Scrolling drives its animation: the demo meeting passes from speaker to speaker, the app screens rise and change, and the demo plays as audio in each agent's voice. With reduced motion turned on it is a plain scrolling page. Open the file in a browser, or publish the `docs` folder with GitHub Pages.
+[docs/index.html](docs/index.html) is a one-page site for Quorum. Scrolling drives its animation: the demo meeting passes from speaker to speaker, the app screens rise and change, and the demo plays as audio in each agent's voice. Each animated section shows where you are and offers a way past it, and the animation can be turned off on the page. With reduced motion turned on in your system it is a plain scrolling page. Open the file in a browser, or publish the `docs` folder with GitHub Pages.
 
 ## Docker quick start (recommended)
 
