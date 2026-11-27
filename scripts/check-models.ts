@@ -1,43 +1,47 @@
 // Sends one short request to each model through a running Quorum server.
 // Nothing is saved. Claude and Codex requests may count against your plan.
+import type { Provider, State } from "../src/engine.ts";
 
 const base = process.env.QUORUM_URL ?? "http://127.0.0.1:4711";
-const get = async (path) => {
+const get = async (path: string) => {
   const response = await fetch(base + path, {
     signal: AbortSignal.timeout(30_000),
   });
   if (!response.ok) throw new Error(path + " returned HTTP " + response.status);
   return response.json();
 };
-const post = async (path, type, body) => {
+const post = async (path: string, type: string, body: RequestInit["body"]) => {
   const response = await fetch(base + path, {
     method: "POST",
     headers: { origin: base, "content-type": type },
     body,
     signal: AbortSignal.timeout(180_000),
   });
-  const result = await response.json();
+  const result = (await response.json()) as { error?: string; model?: string };
   if (!response.ok)
     throw new Error(result.error ?? "HTTP " + response.status);
   return result;
 };
 
-let state, config;
+let state: State, config: { cli?: boolean; whisper?: boolean; kokoro?: boolean };
 try {
-  [state, config] = await Promise.all([get("/api/state"), get("/api/config")]);
+  [state, config] = await Promise.all([
+    get("/api/state") as Promise<State>,
+    get("/api/config") as Promise<typeof config>,
+  ]);
 } catch (error) {
   console.error(
-    "Quorum is not reachable at " + base + " (" + error.message + "). Start it, or set QUORUM_URL.",
+    "Quorum is not reachable at " + base + " (" + (error as Error).message + "). Start it, or set QUORUM_URL.",
   );
   process.exit(1);
 }
 
 // Every model your agents and meetings use, plus each provider's automatic choice.
-const models = new Map();
-const add = (provider, model, use) => {
+const models = new Map<string, { provider: Provider; model: string; uses: Set<string> }>();
+const add = (provider: Provider, model: string, use: string) => {
   if (provider === "demo") return;
   const key = provider + " " + (model || "");
-  const entry = models.get(key) ?? { provider, model: model || "", uses: new Set() };
+  const entry = models.get(key) ?? { provider, model: model || "", uses: new Set<string>() };
   entry.uses.add(use);
   models.set(key, entry);
 };
@@ -45,12 +49,12 @@ for (const agent of state.agents) add(agent.provider, agent.model, "agents");
 for (const meeting of state.meetings)
   for (const agent of meeting.participants)
     add(agent.provider, agent.model, "meetings");
-for (const provider of ["ollama", "openai-compatible", "claude", "codex"])
+for (const provider of ["ollama", "openai-compatible", "claude", "codex"] as const)
   if (config.cli || !["claude", "codex"].includes(provider))
     add(provider, "", "automatic");
 
 let failed = 0;
-async function check(label, request) {
+async function check(label: string, request: () => Promise<{ model?: string } | undefined>) {
   const started = Date.now();
   try {
     const result = await request();
@@ -59,7 +63,7 @@ async function check(label, request) {
     );
   } catch (error) {
     failed++;
-    console.log("FAIL  " + label + "\n      " + error.message.replace(/\n/g, "\n      "));
+    console.log("FAIL  " + label + "\n      " + (error as Error).message.replace(/\n/g, "\n      "));
   }
 }
 console.log("Checking models through " + base + "\n");

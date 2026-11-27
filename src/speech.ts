@@ -1,16 +1,14 @@
 import { mkdtemp, writeFile, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runProcess } from "./providers.js";
+import { runProcess } from "./providers.ts";
 
-/**
- * Container speech uses an OpenAI-compatible endpoint; native installs retain whisper.cpp.
- * @param {Buffer} audio
- * @param {AbortSignal} signal
- * @param {string} mimeType
- * @returns {Promise<string>}
- */
-export async function transcribe(audio, signal, mimeType = "audio/webm") {
+/** Container speech uses an OpenAI-compatible endpoint; native installs retain whisper.cpp. */
+export async function transcribe(
+  audio: Buffer,
+  signal?: AbortSignal,
+  mimeType = "audio/webm",
+): Promise<string> {
   if (process.env.WHISPER_URL) {
     const form = new FormData();
     form.set("file", new Blob([audio], { type: mimeType }), "recording");
@@ -29,7 +27,7 @@ export async function transcribe(audio, signal, mimeType = "audio/webm") {
     );
     if (!response.ok)
       throw new Error("Whisper returned HTTP " + response.status);
-    const result = await response.json();
+    const result = (await response.json()) as { text?: unknown };
     if (typeof result.text !== "string")
       throw new Error("Whisper returned an invalid transcription");
     return result.text.trim();
@@ -74,7 +72,11 @@ export async function transcribe(audio, signal, mimeType = "audio/webm") {
     await rm(cwd, { recursive: true, force: true });
   }
 }
-export async function synthesize(text, voice, signal) {
+export async function synthesize(
+  text: string,
+  voice: string,
+  signal?: AbortSignal,
+): Promise<Buffer> {
   if (!process.env.KOKORO_URL) throw new Error("Kokoro is not configured");
   const response = await fetch(
     process.env.KOKORO_URL.replace(/\/+$/, "") + "/audio/speech",

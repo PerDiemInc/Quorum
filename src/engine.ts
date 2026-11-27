@@ -1,4 +1,67 @@
-export const providers = ['demo', 'ollama', 'openai-compatible', 'claude', 'codex'];
+// The shapes shared by the server, the scripts and the browser.
+export const providers = ['demo', 'ollama', 'openai-compatible', 'claude', 'codex'] as const;
+export type Provider = (typeof providers)[number];
+export interface Skill {
+  name: string;
+  text: string;
+  /** Where an imported skill came from. */
+  source?: string;
+}
+export interface Agent {
+  id: string;
+  name: string;
+  provider: Provider;
+  /** Blank means the model is chosen automatically. */
+  model: string;
+  instructions: string;
+  voice: string;
+  skills: Skill[];
+  category?: string;
+  /** Set on imported agents, so importing again updates them. */
+  source?: string;
+  importedName?: string;
+}
+export interface Message {
+  speaker: string;
+  text: string;
+  model?: string;
+  at?: string;
+}
+export type MeetingStatus = 'paused' | 'running' | 'accepted';
+export interface Meeting {
+  id: string;
+  goal: string;
+  description?: string;
+  agenda?: string;
+  createdAt?: string;
+  participants: Agent[];
+  removedParticipants?: Agent[];
+  transcript: Message[];
+  cursor?: number;
+  status: MeetingStatus;
+  mode?: 'chat' | 'voice';
+}
+export interface State {
+  agents: Agent[];
+  meetings: Meeting[];
+  deletedAgents?: Agent[];
+  initialized?: boolean;
+  _revision?: number;
+}
+/** What a model is told about a meeting. */
+export interface MeetingContext {
+  goal?: string;
+  description?: string;
+  agenda?: string;
+  participants?: ReadonlyArray<{ name: string }>;
+  transcript?: readonly Message[];
+}
+export interface Prompt {
+  system: string;
+  user: string;
+}
+export const isProvider = (value: string): value is Provider =>
+  (providers as readonly string[]).includes(value);
 export const MAX_TURNS = 60;
 export const MAX_PARTICIPANTS = 12;
 export const MAX_SKILLS = 16;
@@ -6,13 +69,15 @@ export const MAX_SKILLS = 16;
 export const MAX_IMPORT = 50;
 // Room for a full SKILL.md or agent profile; sixteen skills still fit within one turn request.
 export const MAX_SKILL_CHARS = 32_000;
-export function normalizeAgent(input) {
-  if (!input || typeof input !== 'object') throw new Error('Agent required');
+/** Check and trim an agent that came from a browser, a file or another process. */
+export function normalizeAgent(value: unknown): Agent {
+  if (!value || typeof value !== 'object') throw new Error('Agent required');
+  const input = value as Record<string, unknown>;
   const name = String(input.name ?? '').trim();
   const provider = String(input.provider ?? '');
-  if (!name || name.length > 80 || !providers.includes(provider)) throw new Error('Invalid agent name or provider');
+  if (!name || name.length > 80 || !isProvider(provider)) throw new Error('Invalid agent name or provider');
   const model = String(input.model ?? '').trim().slice(0, 200);
-  const skills = Array.isArray(input.skills) ? input.skills.slice(0, MAX_SKILLS).map(s => ({
+  const skills: Skill[] = Array.isArray(input.skills) ? (input.skills as Array<Partial<Skill>>).slice(0, MAX_SKILLS).map(s => ({
     name: String(s.name ?? 'Skill').slice(0, 200),
     text: String(s.text ?? '').slice(0, MAX_SKILL_CHARS),
     ...(s.source ? { source: String(s.source).slice(0, 200) } : {}),
@@ -22,12 +87,12 @@ export function normalizeAgent(input) {
     instructions: String(input.instructions ?? '').slice(0, MAX_SKILL_CHARS),
     voice: String(input.voice ?? '').slice(0, 100), skills };
 }
-export function nextParticipant(participants, cursor) {
+export function nextParticipant<P>(participants: readonly P[], cursor: number): P {
   if (!Array.isArray(participants) || !participants.length) throw new Error('Select at least one agent');
   return participants[((cursor % participants.length) + participants.length) % participants.length];
 }
 /** Drop one agent from a meeting without changing whose turn is next. */
-export function removeParticipant(meeting, id) {
+export function removeParticipant<P extends { id: string }>(meeting: { participants: P[]; cursor?: number }, id: string): P | null {
   const { participants } = meeting;
   const index = participants.findIndex(p => p.id === id);
   if (index < 0) return null;
@@ -40,7 +105,7 @@ export function removeParticipant(meeting, id) {
   return removed;
 }
 /** Bring one agent into a meeting without changing whose turn is next. */
-export function addParticipant(meeting, agent) {
+export function addParticipant<P extends { id: string; name: string }>(meeting: { participants: P[]; cursor?: number }, agent: P): P {
   const { participants } = meeting;
   // Tags and voices are matched by name, so names must differ within a meeting.
   const name = agent.name.toLowerCase();
@@ -54,10 +119,10 @@ export function addParticipant(meeting, agent) {
   meeting.cursor = next;
   return agent;
 }
-export function canContinue(meeting, turns, limit) {
+export function canContinue(meeting: { status: string }, turns: number, limit: number): boolean {
   return meeting.status !== 'accepted' && turns < Math.min(MAX_TURNS, Math.max(1, limit));
 }
-export function makePrompt(agent, meeting) {
+export function makePrompt(agent: Pick<Agent, 'name' | 'instructions' | 'skills'>, meeting: MeetingContext): Prompt {
   const messages = (meeting.transcript ?? []).slice(-30).map(m => ({
     speaker: String(m.speaker ?? '').slice(0, 80), text: String(m.text ?? '').slice(0, 4000),
   }));
@@ -85,7 +150,7 @@ export function makePrompt(agent, meeting) {
 }
 
 /** Kokoro voices in the order they are handed out: the most natural first, alternating. */
-export const voices = [
+export const voices: ReadonlyArray<readonly [id: string, label: string]> = [
   ['af_heart', 'Heart · American woman'],
   ['am_michael', 'Michael · American man'],
   ['bf_emma', 'Emma · British woman'],
@@ -115,14 +180,14 @@ export const voices = [
 ];
 /** Reads the host's own messages, so it is never given to an agent. */
 export const hostVoice = 'am_adam';
+type Voiced = { id?: string; voice?: string };
 /**
  * Give every agent in a group its own voice, keeping choices that are already unique.
  * An agent without one takes its library voice when free, so it sounds the same across meetings.
- * @param {Array<{id?: string, voice?: string}>} agents changed in place
- * @param {Array<{id?: string, voice?: string}>} [library]
+ * Agents are changed in place.
  */
-export function assignVoices(agents, library = []) {
-  const taken = new Set();
+export function assignVoices(agents: Voiced[], library: readonly Voiced[] = []): void {
+  const taken = new Set<string>();
   const waiting = agents.filter(agent => {
     if (!agent.voice || agent.voice === hostVoice || taken.has(agent.voice)) return true;
     taken.add(agent.voice);
@@ -137,7 +202,7 @@ export function assignVoices(agents, library = []) {
   });
 }
 /** Drop the Markdown that a voice would otherwise read out or stumble over. */
-export function speakable(text) {
+export function speakable(text: string): string {
   return String(text)
     // A tag is read as the name alone.
     .replace(/(^|\s)@(?=\p{L})/gu, '$1')
@@ -152,8 +217,8 @@ export function speakable(text) {
     .trim();
 }
 /** Group whole sentences, so speech can start before a long message is fully synthesized. */
-export function speechChunks(text, size = 220) {
-  const chunks = [];
+export function speechChunks(text: string, size = 220): string[] {
+  const chunks: string[] = [];
   for (const sentence of text.split(/(?<=[.!?])\s+/)) {
     const last = chunks.at(-1);
     if (last !== undefined && last.length + sentence.length < size)
@@ -165,18 +230,18 @@ export function speechChunks(text, size = 220) {
 
 // ---- Repetition ----
 
-const words = text => String(text).toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/).filter(Boolean);
+type Spoken = { speaker: string; text: string };
+const words = (text: string) => String(text).toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/).filter(Boolean);
 /** Runs of three words: shared topic words do not count as repetition, shared phrasing does. */
-const phrases = list => new Set(list.slice(2).map((_, i) => list.slice(i, i + 3).join(' ')));
-const shared = (some, others) => [...some].filter(p => others.has(p)).length / (some.size || 1);
-const isSpoken = m => m.speaker !== 'Host' && m.speaker !== 'Quorum';
-/** The earlier agent message that a reply mostly repeats, or null.
- * @param {string} text @param {Array<{speaker: string, text: string}>} transcript */
-export function findRepeat(text, transcript) {
+const phrases = (list: string[]) => new Set(list.slice(2).map((_, i) => list.slice(i, i + 3).join(' ')));
+const shared = (some: Set<string>, others: Set<string>) => [...some].filter(p => others.has(p)).length / (some.size || 1);
+const isSpoken = (m: Spoken) => m.speaker !== 'Host' && m.speaker !== 'Quorum';
+/** The earlier agent message that a reply mostly repeats, or null. */
+export function findRepeat<M extends Spoken>(text: string, transcript: readonly M[]): M | null {
   const said = words(text), mine = phrases(said), earlier = transcript.filter(isSpoken).slice(-30);
   if (said.length < 8) return earlier.find(m => words(m.text).join(' ') === said.join(' ')) ?? null;
-  const all = new Set();
-  let closest = null, most = 0;
+  const all = new Set<string>();
+  let closest: M | null = null, most = 0;
   for (const message of earlier) {
     const theirs = phrases(words(message.text));
     theirs.forEach(p => all.add(p));
@@ -187,15 +252,15 @@ export function findRepeat(text, transcript) {
   return most >= 0.5 || shared(mine, all) >= 0.7 ? closest : null;
 }
 /** Leave out agent messages that mostly copy an earlier one. The host is always kept. */
-export function withoutCopies(transcript) {
-  const kept = [];
+export function withoutCopies<M extends Spoken>(transcript: readonly M[]): M[] {
+  const kept: M[] = [];
   for (const message of transcript)
     if (!isSpoken(message) || !findRepeat(message.text, kept)) kept.push(message);
   return kept;
 }
 /** Remove sentences a model said twice within one reply. */
-export function withoutRepeatedSentences(text) {
-  const seen = new Set();
+export function withoutRepeatedSentences(text: string): string {
+  const seen = new Set<string>();
   // The capture keeps the spacing: sentences are at even positions, spacing at odd ones.
   const parts = String(text).split(/(?<=[.!?])(\s+)/);
   let kept = '';
@@ -214,10 +279,9 @@ export function withoutRepeatedSentences(text) {
 // ---- Tagging agents ----
 
 const letter = /[\p{L}\p{N}_]/u;
-/** Participants tagged with @Name, in the order they appear. The longest name wins.
- * @template {{name: string}} P @param {string} text @param {P[]} participants @returns {P[]} */
-export function findMentions(text, participants) {
-  const lower = String(text).toLowerCase(), found = [];
+/** Participants tagged with @Name, in the order they appear. The longest name wins. */
+export function findMentions<P extends { name: string }>(text: string, participants: readonly P[]): P[] {
+  const lower = String(text).toLowerCase(), found: P[] = [];
   const byLength = [...participants].sort((a, b) => b.name.length - a.name.length);
   for (let at = lower.indexOf('@'); at >= 0; at = lower.indexOf('@', at + 1)) {
     // An address such as host@example.com is not a tag.
@@ -228,9 +292,8 @@ export function findMentions(text, participants) {
   }
   return found;
 }
-/** The tag being typed just before the cursor, if any.
- * @returns {{start: number, query: string} | null} */
-export function mentionAt(text, caret) {
+/** The tag being typed just before the cursor, if any. */
+export function mentionAt(text: string, caret: number): { start: number; query: string } | null {
   const before = String(text).slice(0, caret);
   const start = before.lastIndexOf('@');
   if (start < 0 || (start && !/[\s([{,;:"']/.test(before[start - 1]))) return null;
@@ -238,7 +301,7 @@ export function mentionAt(text, caret) {
   return query.length > 80 || query.includes('\n') ? null : { start, query };
 }
 /** Names that start with what was typed, then names with a later word that does. */
-export function suggestMentions(query, participants) {
+export function suggestMentions<P extends { name: string }>(query: string, participants: readonly P[]): P[] {
   const typed = query.toLowerCase();
   const first = participants.filter(p => p.name.toLowerCase().startsWith(typed));
   const later = participants.filter(p => !first.includes(p)

@@ -2,16 +2,24 @@ import { spawn } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { Agent, MeetingContext, Prompt } from "./engine.ts";
 
-/** @param {string} command CLAUDE_BIN covers a claude that is not on the server's PATH. */
-export const cliBin = (command) =>
+/** CLAUDE_BIN covers a claude that is not on the server's PATH. */
+export const cliBin = (command: string) =>
   command === "claude" ? process.env.CLAUDE_BIN || "claude" : command;
 
+interface RunOptions {
+  input?: string;
+  cwd?: string;
+  signal?: AbortSignal;
+  maxBytes?: number;
+  includeStderr?: boolean;
+}
 export function runProcess(
-  command,
-  args,
-  { input, cwd, signal, maxBytes = 2_000_000, includeStderr = false } = {},
-) {
+  command: string,
+  args: string[],
+  { input, cwd, signal, maxBytes = 2_000_000, includeStderr = false }: RunOptions = {},
+): Promise<string> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
       reject(signal.reason);
@@ -28,7 +36,7 @@ export function runProcess(
       size = 0;
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
-    const collect = (chunk, stderr) => {
+    const collect = (chunk: string, stderr: boolean) => {
       size += Buffer.byteLength(chunk);
       if (size > maxBytes) {
         child.kill();
@@ -40,7 +48,7 @@ export function runProcess(
     };
     child.stdout.on("data", (c) => collect(c, false));
     child.stderr.on("data", (c) => collect(c, true));
-    child.on("error", (error) => {
+    child.on("error", (error: NodeJS.ErrnoException) => {
       if (error.code !== "ENOENT") return reject(error);
       reject(
         Object.assign(
@@ -75,7 +83,12 @@ export function runProcess(
     child.stdin.end(input);
   });
 }
-async function requestJSON(url, payload, signal, token) {
+async function requestJSON(
+  url: string,
+  payload: unknown,
+  signal?: AbortSignal,
+  token?: string,
+): Promise<unknown> {
   const response = await fetch(url, {
     method: "POST",
     signal,
@@ -87,7 +100,7 @@ async function requestJSON(url, payload, signal, token) {
   });
   if (!response.ok) {
     const detail = await response.json().then(
-      (body) => body?.error,
+      (body) => (body as { error?: unknown } | null)?.error,
       () => null,
     );
     throw Object.assign(
@@ -110,23 +123,29 @@ const DEMO_LINES = [
   "What would make us stop? Agreeing on that now keeps the plan honest.",
   "Host, which constraint matters most here: time, cost or quality?",
 ];
-function endpoint(base, path) {
+function endpoint(base: string, path: string) {
   return base.replace(/\/+$/, "") + path;
 }
-/** @param {{attempt?: number}} [options] a later attempt asks local models for more variety */
-export async function respond(agent, prompt, signal, { attempt = 0 } = {}) {
+/** @param options a later attempt asks local models for more variety */
+export async function respond(
+  agent: Pick<Agent, "name" | "provider" | "model">,
+  prompt: Prompt,
+  signal?: AbortSignal,
+  { attempt = 0 }: { attempt?: number } = {},
+): Promise<string> {
   const messages = [
     { role: "system", content: prompt.system },
     { role: "user", content: prompt.user },
   ];
-  let answer;
+  let answer: unknown;
   switch (agent.provider) {
     case "demo": {
-      const turn = (JSON.parse(prompt.user).transcript?.length ?? 0) % DEMO_LINES.length;
+      const context = JSON.parse(prompt.user) as MeetingContext;
+      const turn = (context.transcript?.length ?? 0) % DEMO_LINES.length;
       return "[Demo only] " + agent.name + ": " + DEMO_LINES[turn];
     }
     case "ollama": {
-      const result = await requestJSON(
+      const result = (await requestJSON(
         endpoint(
           process.env.OLLAMA_URL ?? "http://127.0.0.1:11434",
           "/api/chat",
@@ -145,12 +164,12 @@ export async function respond(agent, prompt, signal, { attempt = 0 } = {}) {
           },
         },
         signal,
-      );
+      )) as { message?: { content?: unknown } };
       answer = result.message?.content;
       break;
     }
     case "openai-compatible": {
-      const result = await requestJSON(
+      const result = (await requestJSON(
         endpoint(
           process.env.QUORUM_OPENAI_URL ?? "http://127.0.0.1:8080/v1",
           "/chat/completions",
@@ -165,14 +184,14 @@ export async function respond(agent, prompt, signal, { attempt = 0 } = {}) {
         },
         signal,
         process.env.QUORUM_OPENAI_KEY,
-      );
+      )) as { choices?: Array<{ message?: { content?: unknown } }> };
       answer = result.choices?.[0]?.message?.content;
       break;
     }
     case "claude":
     case "codex": {
       if (process.env.QUORUM_CLI_BRIDGE_URL) {
-        const result = await requestJSON(
+        const result = (await requestJSON(
           endpoint(process.env.QUORUM_CLI_BRIDGE_URL, "/respond"),
           { agent, prompt },
           signal,
@@ -183,7 +202,7 @@ export async function respond(agent, prompt, signal, { attempt = 0 } = {}) {
           throw new Error(
             "The Mac CLI bridge is not reachable. Start it with npm run bridge, then try again.",
           );
-        });
+        })) as { text?: unknown };
         answer = result.text;
         break;
       }

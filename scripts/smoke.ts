@@ -15,7 +15,9 @@ assert.equal(
   ).status,
   403,
 );
-const settings = await (await fetch(base + "/api/models")).json();
+const settings = (await (await fetch(base + "/api/models")).json()) as {
+  ollama: { available: boolean; models: Array<{ name: string }> };
+};
 assert.equal(settings.ollama.available, true);
 assert.ok(
   settings.ollama.models.some((m) => m.name === model),
@@ -41,7 +43,7 @@ const response = await fetch(base + "/api/turn", {
   }),
 });
 assert.equal(response.status, 200);
-const result = await response.json();
+const result = (await response.json()) as { text: string };
 assert.ok(result.text?.length > 0);
 assert.ok(!result.text.includes("[Demo only]"));
 console.log(

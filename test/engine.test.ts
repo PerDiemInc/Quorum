@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { nextParticipant, canContinue, normalizeAgent, makePrompt, removeParticipant, assignVoices, speakable, speechChunks, hostVoice, voices, findRepeat, withoutCopies, withoutRepeatedSentences, findMentions, mentionAt, suggestMentions, addParticipant, MAX_PARTICIPANTS } from '../src/engine.js';
+import type { Agent, Message } from '../src/engine.ts';
+import { nextParticipant, canContinue, normalizeAgent, makePrompt, removeParticipant, assignVoices, speakable, speechChunks, hostVoice, voices, findRepeat, withoutCopies, withoutRepeatedSentences, findMentions, mentionAt, suggestMentions, addParticipant, MAX_PARTICIPANTS } from '../src/engine.ts';
 test('participants take turns in order and repeat', () => {
   const p = [{name:'A'},{name:'B'}];
   assert.equal(nextParticipant(p,0).name,'A');
@@ -18,7 +19,7 @@ test('model override preserves identity and skill instructions', () => {
   const a = normalizeAgent({name:'CTO',provider:'ollama',model:'qwen',skills:[{name:'Architecture',text:'Evaluate tradeoffs'}]});
   const m = {goal:'Design API',agenda:'Latency',participants:[a],transcript:[{speaker:'Host',text:'Use queues'}]};
   const first = makePrompt(a,m);
-  const second = makePrompt({...a,provider:'codex',model:'other'},m);
+  const second = makePrompt({...a,provider:'codex',model:'other'} as Agent,m);
   assert.deepEqual(first,second);
   assert.match(first.system,/Evaluate tradeoffs/);
   assert.match(first.user,/Use queues/);
@@ -28,12 +29,12 @@ test('invalid agents are rejected and a blank model means automatic',()=>{
   assert.equal(normalizeAgent({name:'A',provider:'ollama'}).model,'');
 });
 test('removing a participant keeps the next speaker', () => {
-  const meeting = cursor => ({cursor, participants: ['a','b','c'].map(id => ({id}))});
-  const next = m => nextParticipant(m.participants, m.cursor).id;
+  const meeting = (cursor: number) => ({cursor, participants: ['a','b','c'].map(id => ({id}))});
+  const next = (m: ReturnType<typeof meeting>) => nextParticipant(m.participants, m.cursor).id;
   // Cursor 4 means b is next (or speaking now).
   for (const [removed, expected] of [['a','b'], ['b','c'], ['c','b']]) {
     const m = meeting(4);
-    assert.equal(removeParticipant(m, removed).id, removed);
+    assert.equal(removeParticipant(m, removed)!.id, removed);
     assert.equal(next(m), expected);
   }
   const last = meeting(2);
@@ -56,7 +57,7 @@ test('every agent gets its own voice and unique choices are kept', () => {
   assignVoices(team, library);
   assert.equal(team[1].voice, library[7].voice);
   assert.equal(new Set(team.map(a => a.voice)).size, 3);
-  const crowd = Array.from({ length: voices.length + 3 }, () => ({}));
+  const crowd = Array.from({ length: voices.length + 3 }, (): { voice?: string } => ({}));
   assignVoices(crowd);
   assert.ok(crowd.every(a => a.voice));
 });
@@ -68,7 +69,7 @@ test('speech drops Markdown and splits long text between sentences', () => {
   assert.equal(parts[0], 'One is here. Two follows it!');
 });
 const plan = 'We should run a two week pilot with fifty cups and measure how many come back each day.';
-const says = (speaker, text) => ({ speaker, text });
+const says = (speaker: string, text: string): Message => ({ speaker, text });
 test('a reply that mostly copies an earlier agent message is a repeat', () => {
   const history = [says('Host', 'Where do we start?'), says('Sales', plan)];
   assert.equal(findRepeat(plan, history), history[1]);
@@ -77,7 +78,7 @@ test('a reply that mostly copies an earlier agent message is a repeat', () => {
   // Quoting the host, or using the same topic words, is not a repeat.
   assert.equal(findRepeat('Where do we start?', history), null);
   assert.equal(findRepeat('A pilot is fine, but fifty cups may run out before the dishwasher finishes its first cycle.', history), null);
-  assert.equal(findRepeat('Yes.', [says('QA', 'yes')]).speaker, 'QA');
+  assert.equal(findRepeat('Yes.', [says('QA', 'yes')])!.speaker, 'QA');
 });
 test('copies are left out of the prompt and sentences are not doubled', () => {
   const history = [says('A', plan), says('B', plan), says('Host', plan), says('C', 'Something entirely different about who washes the cups and when they do it.')];
@@ -89,7 +90,7 @@ test('copies are left out of the prompt and sentences are not doubled', () => {
 });
 test('tags match whole names, the longest first, and ignore addresses', () => {
   const people = ['Product', 'Product Manager', 'QA', "Devil's Advocate"].map(name => ({ name }));
-  const names = text => findMentions(text, people).map(p => p.name);
+  const names = (text: string) => findMentions(text, people).map(p => p.name);
   assert.deepEqual(names('@qa then @Product Manager, and @QA again'), ['QA', 'Product Manager']);
   assert.deepEqual(names("(@Devil's Advocate) @Product?"), ["Devil's Advocate", 'Product']);
   assert.deepEqual(names('mail me@qa.example, ask @QAx or @Nobody'), []);
@@ -101,14 +102,14 @@ test('autocomplete follows the tag being typed', () => {
   assert.equal(mentionAt('me@qa', 5), null);
   assert.equal(mentionAt('@qa\nmore', 8), null);
   const people = ['Product Manager', 'Project Manager', 'Customer Success'].map(name => ({ name }));
-  const found = q => suggestMentions(q, people).map(p => p.name);
+  const found = (q: string) => suggestMentions(q, people).map(p => p.name);
   assert.deepEqual(found('pro'), ['Product Manager', 'Project Manager']);
   assert.deepEqual(found('man'), ['Product Manager', 'Project Manager']);
   assert.deepEqual(found('Product Manager '), []);
 });
 test('a directly tagged agent is told to answer, once', () => {
   const agent = normalizeAgent({ name: 'QA', provider: 'claude' });
-  const meeting = transcript => ({ goal: 'g', participants: [agent], transcript });
+  const meeting = (transcript: Message[]) => ({ goal: 'g', participants: [agent], transcript });
   assert.match(makePrompt(agent, meeting([says('Host', '@QA what breaks?')])).system, /addressed you directly/);
   assert.doesNotMatch(makePrompt(agent, meeting([says('Host', '@QA what breaks?'), says('QA', 'The bin.')])).system, /addressed you directly/);
   assert.doesNotMatch(makePrompt(agent, meeting([says('Host', 'What breaks?')])).system, /addressed you directly/);

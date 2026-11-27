@@ -1,9 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { chooseModel } from "../src/models.js";
+import { chooseModel } from "../src/models.ts";
+import type { Provider } from "../src/engine.ts";
 
 const signal = () => AbortSignal.timeout(2000);
-const chat = (name, size, extra = {}) => ({
+const chat = (name: string, size: number, extra: { remote_host?: string } = {}) => ({
   name,
   size,
   capabilities: ["completion"],
@@ -12,7 +13,7 @@ const chat = (name, size, extra = {}) => ({
 
 test("CLI and demo agents get a model without any lookup", async (t) => {
   t.mock.method(globalThis, "fetch", async () => assert.fail("no lookup"));
-  const pick = (provider, model = "") =>
+  const pick = (provider: Provider, model = "") =>
     chooseModel({ provider, model }, signal());
   assert.equal(await pick("demo", "stale"), "");
   assert.equal(await pick("claude"), "sonnet");
@@ -46,7 +47,7 @@ test("an unreachable Ollama keeps a pinned model and explains a blank one", asyn
   t.mock.method(globalThis, "fetch", async () => {
     throw new Error("offline");
   });
-  const pick = (model) =>
+  const pick = (model: string) =>
     chooseModel({ provider: "ollama", model }, signal());
   assert.equal(await pick("pinned:1b"), "pinned:1b");
   await assert.rejects(pick(""), /Ollama is unavailable/);

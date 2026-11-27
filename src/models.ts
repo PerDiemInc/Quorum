@@ -1,9 +1,33 @@
 import { readFile } from "node:fs/promises";
-import { cliBin, runProcess } from "./providers.js";
+import { cliBin, runProcess } from "./providers.ts";
+import type { Agent } from "./engine.ts";
 
-/** @typedef {{name: string, status: string, completed?: number, total?: number, error?: string}} ModelPull */
-/** @type {ModelPull | null} */
-let pull = null;
+export interface ModelPull {
+  name: string;
+  status: "downloading" | "complete" | "failed";
+  completed?: number;
+  total?: number;
+  error?: string;
+}
+export interface CLIStatus {
+  installed: boolean;
+  authenticated: boolean;
+  enabled: boolean;
+  version?: string;
+}
+/** An entry of Ollama's model list, as far as it is read here. */
+interface OllamaModel {
+  name: string;
+  size: number;
+  remote_host?: string;
+  capabilities?: string[];
+}
+/** What the CLI bridge reports at /status. */
+interface BridgeStatus {
+  claude: CLIStatus;
+  codex: CLIStatus;
+}
+let pull: ModelPull | null = null;
 const ollamaURL = () => process.env.OLLAMA_URL ?? "http://127.0.0.1:11434";
 
 /** Models used for CLI agents that have no pinned model. */
@@ -17,15 +41,20 @@ const openaiURL = () =>
   );
 
 /** Read a server-configured model list, or null when it cannot be read. */
-async function listModels(url, key, signal, token) {
+async function listModels<M>(
+  url: string,
+  key: string,
+  signal: AbortSignal,
+  token?: string,
+): Promise<M[] | null> {
   try {
     const response = await fetch(url, {
       signal: AbortSignal.any([signal, AbortSignal.timeout(4000)]),
       headers: token ? { authorization: "Bearer " + token } : {},
     });
     if (!response.ok) return null;
-    const models = (await response.json())[key];
-    return Array.isArray(models) ? models : null;
+    const models = ((await response.json()) as Record<string, unknown>)[key];
+    return Array.isArray(models) ? (models as M[]) : null;
   } catch {
     return null;
   }
@@ -34,7 +63,7 @@ async function listModels(url, key, signal, token) {
 /** Largest local chat model within the size limit, otherwise the smallest one.
  * Embedding models cannot chat, and cloud models would send meeting data off this machine.
  */
-function bestOllamaModel(models) {
+function bestOllamaModel(models: OllamaModel[]) {
   const local = models
     .filter(
       (m) =>
@@ -48,17 +77,16 @@ function bestOllamaModel(models) {
   return (local.find((m) => m.size <= AUTO_MAX_BYTES) ?? local.at(-1))?.name;
 }
 
-/** Decide which model answers a turn. A blank agent model means automatic.
- * @param {{provider: string, model: string}} agent
- * @param {AbortSignal} signal
- * @returns {Promise<string>}
- */
-export async function chooseModel({ provider, model }, signal) {
+/** Decide which model answers a turn. A blank agent model means automatic. */
+export async function chooseModel(
+  { provider, model }: Pick<Agent, "provider" | "model">,
+  signal: AbortSignal,
+): Promise<string> {
   if (provider === "demo") return "";
   if (provider === "claude" || provider === "codex")
     return model || cliModels[provider];
   if (provider === "ollama") {
-    const installed = await listModels(
+    const installed = await listModels<OllamaModel>(
       ollamaURL() + "/api/tags",
       "models",
       signal,
@@ -69,8 +97,8 @@ export async function chooseModel({ provider, model }, signal) {
         "Cannot choose a model because Ollama is unavailable. Start it and try again.",
       );
     }
-    const tagged = (name) =>
-      name.split("/").at(-1).includes(":") ? name : name + ":latest";
+    const tagged = (name: string) =>
+      name.split("/").at(-1)!.includes(":") ? name : name + ":latest";
     // A saved model that is no longer installed falls back to automatic selection.
     if (model && installed.some((m) => tagged(m.name) === tagged(model)))
       return model;
@@ -83,7 +111,7 @@ export async function chooseModel({ provider, model }, signal) {
   }
   // Compatible endpoints may serve models they do not list, so keep a pinned name.
   if (model) return model;
-  const served = await listModels(
+  const served = await listModels<{ id: string }>(
     openaiURL() + "/models",
     "data",
     signal,
@@ -99,11 +127,13 @@ export async function chooseModel({ provider, model }, signal) {
 
 /** Probe each provider independently so one offline service cannot hide the others. */
 export async function modelSettings() {
-  const probe = async (url) => {
+  const probe = async (url: string) => {
     try {
       const response = await fetch(url, { signal: AbortSignal.timeout(4000) });
       if (!response.ok) throw new Error("HTTP " + response.status);
-      return { available: true, data: await response.json() };
+      // Ollama lists under "models", compatible endpoints under "data".
+      const data = (await response.json()) as { models?: unknown; data?: unknown } | null;
+      return { available: true, data };
     } catch {
       return { available: false, data: null };
     }
@@ -129,7 +159,7 @@ export async function modelSettings() {
         },
       );
       if (!response.ok) throw new Error("Bridge unavailable");
-      const status = await response.json();
+      const status = (await response.json()) as BridgeStatus;
       claude = status.claude;
       codex = status.codex;
       cliBridge = true;
@@ -137,7 +167,7 @@ export async function modelSettings() {
       /* The Settings UI must not imply access when the bridge is offline. */
     }
   }
-  let hostAccess = null;
+  let hostAccess: unknown = null;
   try {
     hostAccess = JSON.parse(
       await readFile(
@@ -162,11 +192,8 @@ export async function modelSettings() {
   };
 }
 
-/** Start one bounded download. The URL is server-configured, never supplied by the browser.
- * @param {string} name
- * @returns {ModelPull}
- */
-export function installModel(name) {
+/** Start one bounded download. The URL is server-configured, never supplied by the browser. */
+export function installModel(name: unknown): ModelPull {
   if (
     typeof name !== "string" ||
     !/^[a-zA-Z0-9][a-zA-Z0-9._/-]*(?::[a-zA-Z0-9._-]+)?$/.test(name) ||
@@ -183,7 +210,7 @@ export function installModel(name) {
       status: 409,
     });
   pull = { name, status: "downloading" };
-  const job = pull;
+  const job: ModelPull = pull;
   void (async () => {
     try {
       const response = await fetch(ollamaURL() + "/api/pull", {
@@ -195,9 +222,14 @@ export function installModel(name) {
       if (!response.ok)
         throw new Error("Ollama returned HTTP " + response.status);
       let pending = "";
-      const consume = (line) => {
+      const consume = (line: string) => {
         if (!line.trim()) return;
-        const progress = JSON.parse(line);
+        const progress = JSON.parse(line) as {
+          error?: string;
+          total?: number;
+          completed?: number;
+          status?: string;
+        };
         if (progress.error) throw new Error(progress.error);
         if (progress.total) {
           job.total = progress.total;
@@ -205,12 +237,12 @@ export function installModel(name) {
         }
         if (progress.status === "success") job.status = "complete";
       };
-      for await (const chunk of response.body.pipeThrough(
+      for await (const chunk of response.body!.pipeThrough(
         new TextDecoderStream(),
       )) {
         pending += chunk;
         const lines = pending.split("\n");
-        pending = lines.pop();
+        pending = lines.pop()!;
         for (const line of lines) consume(line);
       }
       consume(pending);
@@ -218,18 +250,20 @@ export function installModel(name) {
         throw new Error("Download ended before Ollama confirmed success");
     } catch (error) {
       job.status = "failed";
-      job.error = error.message;
+      job.error = (error as Error).message;
     }
   })();
   return job;
 }
 
-/** Claude readiness for the header chip. It never includes account details.
- * @returns {Promise<{ready: boolean, disabled?: boolean, message?: string}>}
- */
-export async function claudeStatus() {
-  const unavailable = (message) => ({ ready: false, message });
-  let cli;
+/** Claude readiness for the header chip. It never includes account details. */
+export async function claudeStatus(): Promise<{
+  ready: boolean;
+  disabled?: boolean;
+  message?: string;
+}> {
+  const unavailable = (message: string) => ({ ready: false, message });
+  let cli: CLIStatus | undefined;
   if (process.env.QUORUM_CLI_BRIDGE_URL) {
     try {
       const response = await fetch(
@@ -242,7 +276,7 @@ export async function claudeStatus() {
         },
       );
       if (!response.ok) throw new Error("Bridge unavailable");
-      cli = (await response.json()).claude;
+      cli = ((await response.json()) as Partial<BridgeStatus>).claude;
     } catch {
       return unavailable(
         "The Mac CLI bridge is not reachable. Start it with npm run bridge.",
@@ -262,8 +296,7 @@ export async function claudeStatus() {
   return { ready: true };
 }
 
-/** @param {'claude' | 'codex'} command */
-export async function checkCLI(command) {
+export async function checkCLI(command: "claude" | "codex"): Promise<CLIStatus> {
   try {
     const version = await runProcess(cliBin(command), ["--version"], {
       signal: AbortSignal.timeout(4000),
@@ -278,7 +311,7 @@ export async function checkCLI(command) {
       );
       authenticated =
         command === "claude"
-          ? JSON.parse(status).loggedIn === true
+          ? (JSON.parse(status) as { loggedIn?: unknown }).loggedIn === true
           : /Logged in/i.test(status);
     } catch {
       /* Missing/expired login is a distinct state from a missing executable. */

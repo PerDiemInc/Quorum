@@ -12,11 +12,12 @@ import {
   parseGitHubURL,
   listGitHub,
   readGitHub,
-} from "../src/import.js";
-import { normalizeAgent, MAX_SKILL_CHARS } from "../src/engine.js";
+} from "../src/import.ts";
+import type { ImportedSkill, Profile } from "../src/import.ts";
+import { normalizeAgent, MAX_SKILL_CHARS } from "../src/engine.ts";
 
 const saved = { ...process.env };
-let root;
+let root: string;
 before(async () => {
   root = await mkdtemp(join(tmpdir(), "quorum-skills-"));
   const skills = join(root, "skills");
@@ -60,7 +61,8 @@ test("local Claude agents and skills are listed and read only by id", async () =
   assert.equal(items[0].description, "Review a change carefully.");
   assert.ok(!("content" in items[0]));
   const read = await readLocal(items.map((i) => i.id));
-  const [review, long, agent] = read.items;
+  const [review, long] = read.items as ImportedSkill[];
+  const agent = read.items[2] as Profile;
   assert.equal(review.text, "# Review\nRead the diff.");
   assert.equal(long.text.length, MAX_SKILL_CHARS);
   assert.equal(long.truncated, true);
@@ -78,8 +80,8 @@ test("every included skill is listed with its source and can be added", async ()
   assert.ok(items.length > 200, String(items.length));
   assert.ok(items.every((i) => i.kind === "skill" && /^github\.com\/[\w-]+\/[\w.-]+$/.test(i.source)));
   const marketing = items.find((i) => i.name === "pricing");
-  const { items: [skill] } = await readLibrary([marketing.id]);
-  assert.ok(skill.text.length > 500);
+  const { items: [skill] } = await readLibrary([marketing!.id]);
+  assert.ok((skill as ImportedSkill).text.length > 500);
 });
 
 test("only GitHub addresses are accepted", () => {
@@ -100,13 +102,13 @@ test("only GitHub addresses are accepted", () => {
     "https://github.com/acme/skills/tree/main/%2e%2e%2fsecret",
     "file:///etc/passwd",
   ])
-    assert.throws(() => parseGitHubURL(bad), undefined, bad);
+    assert.throws(() => parseGitHubURL(bad), Error, bad);
 });
 
 test("a repository's profiles and skills are fetched from GitHub only", async (t) => {
-  const calls = [];
-  const blob = (path) => ({ type: "blob", path });
-  t.mock.method(globalThis, "fetch", async (url) => {
+  const calls: string[] = [];
+  const blob = (path: string) => ({ type: "blob", path });
+  t.mock.method(globalThis, "fetch", async (url: string | URL | Request) => {
     calls.push(String(url));
     if (String(url).startsWith("https://api.github.com/"))
       return Response.json({
@@ -129,10 +131,11 @@ test("a repository's profiles and skills are fetched from GitHub only", async (t
   calls.length = 0;
   const read = await readGitHub("acme/kit", ["kit/agents/planner.md", "kit/agents/notes.md"]);
   assert.deepEqual(read.skipped, ["kit/agents/notes.md"]);
-  assert.equal(read.items[0].name, "Planner");
-  assert.equal(read.items[0].model, "");
-  assert.equal(read.items[0].source, "github.com/acme/kit");
-  assert.deepEqual(read.items[0].skills.map((s) => s.name), ["planning"]);
+  const planner = read.items[0] as Profile;
+  assert.equal(planner.name, "Planner");
+  assert.equal(planner.model, "");
+  assert.equal(planner.source, "github.com/acme/kit");
+  assert.deepEqual(planner.skills.map((s) => s.name), ["planning"]);
   assert.ok(calls.every((c) => /^https:\/\/(api\.github|raw\.githubusercontent)\.com\//.test(c)));
   for (const paths of [["../x.md"], ["a/../../x.md"], ["run.sh"], []])
     await assert.rejects(readGitHub("acme/kit", paths));

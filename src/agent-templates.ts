@@ -1,8 +1,8 @@
-import { normalizeAgent } from "./engine.js";
+import { normalizeAgent } from "./engine.ts";
+import type { Agent, State } from "./engine.ts";
 
-/** @typedef {ReturnType<typeof normalizeAgent>} Agent */
-/** Curated meeting roles. Sources are references, never executable instructions. @type {Agent[]} */
-export const starterAgents = [
+/** Curated meeting roles. Sources are references, never executable instructions. */
+export const starterAgents: Agent[] = [
   {
     id: "quorum-role-developer",
     name: "Developer",
@@ -446,10 +446,9 @@ export const starterAgents = [
 ];
 
 /** Add only missing roles; preserve customized agents, archived roles and meeting snapshots.
- * @param {{agents: Agent[], deletedAgents?: Agent[]}} state
- * @returns {number} Number of roles added.
+ * @returns Number of roles added.
  */
-export function addStarterAgents(state) {
+export function addStarterAgents(state: Pick<State, "agents" | "deletedAgents">): number {
   // Teams added before roles had categories pick theirs up here.
   for (const agent of state.agents) {
     const template = starterAgents.find((t) => t.id === agent.id);

@@ -9,4 +9,4 @@ COPY --chown=node:node skills ./skills
 COPY --chown=node:node scripts ./scripts
 USER node
 EXPOSE 4710
-CMD ["node", "src/server.js"]
+CMD ["node", "src/server.ts"]

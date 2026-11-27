@@ -1,14 +1,29 @@
-import { findRepeat, makePrompt, withoutRepeatedSentences } from "./engine.js";
-import { respond } from "./providers.js";
+import { findRepeat, makePrompt, withoutRepeatedSentences } from "./engine.ts";
+import { respond } from "./providers.ts";
+import type { Agent, Message, MeetingContext, Prompt } from "./engine.ts";
 
 const ATTEMPTS = 3;
 
+/** A meeting as a turn needs it: what was said so far is required. */
+export type TurnMeeting = MeetingContext & { transcript: readonly Message[] };
+type Ask = (
+  agent: Agent,
+  prompt: Prompt,
+  signal: AbortSignal | undefined,
+  options: { attempt: number },
+) => Promise<string>;
+
 /** Ask an agent for its turn, and again if it only repeats what was already said.
- * @returns {Promise<{text: string} | {skipped: true}>} skipped when it had nothing new
+ * @returns skipped when it had nothing new
  */
-export async function freshTurn(agent, meeting, signal, ask = respond) {
+export async function freshTurn(
+  agent: Agent,
+  meeting: TurnMeeting,
+  signal: AbortSignal | undefined,
+  ask: Ask = respond,
+): Promise<{ text: string } | { skipped: true }> {
   const prompt = makePrompt(agent, meeting);
-  let repeated = null;
+  let repeated: Message | false | null = null;
   for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
     const text = withoutRepeatedSentences(
       await ask(
@@ -26,7 +41,7 @@ export async function freshTurn(agent, meeting, signal, ask = respond) {
 }
 
 /** The same request without the message being copied, and saying why it was refused. */
-function nudge(agent, meeting, repeated) {
+function nudge(agent: Agent, meeting: TurnMeeting, repeated: Message): Prompt {
   const prompt = makePrompt(agent, {
     ...meeting,
     // A shorter history without the copied message gives a model less to echo.

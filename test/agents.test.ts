@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { addStarterAgents, starterAgents } from "../src/agent-templates.js";
-import { normalizeAgent, makePrompt } from "../src/engine.js";
+import { addStarterAgents, starterAgents } from "../src/agent-templates.ts";
+import { normalizeAgent, makePrompt } from "../src/engine.ts";
 
 test("distinct specialist roles normalize and keep their skills in prompts", () => {
   assert.equal(starterAgents.length, 22);
@@ -11,7 +11,7 @@ test("distinct specialist roles normalize and keep their skills in prompts", () 
     const agent = normalizeAgent(template);
     assert.equal(agent.skills.length, 2);
     assert.equal(agent.provider, "ollama");
-    assert.ok(["Build", "Product", "Grow", "Run"].includes(agent.category), agent.name);
+    assert.ok(["Build", "Product", "Grow", "Run"].includes(agent.category!), agent.name);
     const prompt = makePrompt(agent, {
       goal: "Review a launch",
       participants: [],

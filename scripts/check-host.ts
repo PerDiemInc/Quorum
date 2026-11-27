@@ -1,5 +1,5 @@
 import { mkdir, writeFile } from "node:fs/promises";
-import { checkCLI } from "../src/models.js";
+import { checkCLI } from "../src/models.ts";
 
 // Store only capability booleans and versions, never login output or credentials.
 const [claude, codex] = await Promise.all([

@@ -6,13 +6,14 @@ import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createServer } from "node:net";
+import type { AddressInfo } from "node:net";
 
 test("host bridge requires a token and restricts calls to its fixed CLI adapters", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "quorum-bridge-"));
   const socket = createServer();
   socket.listen(0, "127.0.0.1");
   await once(socket, "listening");
-  const port = socket.address().port;
+  const port = (socket.address() as AddressInfo).port;
   await new Promise((resolve) => socket.close(resolve));
   await mkdir(join(root, ".quorum/bridge"), { recursive: true });
   const token = "a".repeat(64);
@@ -32,7 +33,7 @@ esac
 `,
       { mode: 0o755 },
     );
-  const child = spawn(process.execPath, [resolve("scripts/cli-bridge.js")], {
+  const child = spawn(process.execPath, [resolve("scripts/cli-bridge.ts")], {
     cwd: root,
     env: {
       ...process.env,
@@ -69,7 +70,10 @@ esac
     authorization: "Bearer " + token,
     "content-type": "application/json",
   };
-  const status = await (await fetch(base + "/status", { headers })).json();
+  const status = (await (await fetch(base + "/status", { headers })).json()) as Record<
+    "claude" | "codex",
+    { authenticated: boolean }
+  >;
   assert.equal(status.claude.authenticated, true);
   assert.equal(status.codex.authenticated, true);
   const payload = {
@@ -82,7 +86,7 @@ esac
     body: JSON.stringify(payload),
   });
   assert.equal(response.status, 200);
-  assert.match((await response.json()).text, /test CLI/);
+  assert.match(((await response.json()) as { text: string }).text, /test CLI/);
   payload.agent.provider = "demo";
   assert.equal(
     (

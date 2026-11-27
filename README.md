@@ -2,6 +2,7 @@
 
 **Your AI team. One conversation. One goal.**
 
+[![Quorum website](https://img.shields.io/badge/Website-perdieminc.github.io%2FQuorum-0071e3?style=for-the-badge&logo=githubpages&logoColor=white)](https://perdieminc.github.io/Quorum/)
 [![Quorum on GitHub](https://img.shields.io/badge/GitHub-PerDiemInc%2FQuorum-181717?style=for-the-badge&logo=github&logoColor=white)](https://github.com/PerDiemInc/Quorum)
 [![CI](https://github.com/PerDiemInc/Quorum/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/PerDiemInc/Quorum/actions/workflows/ci.yml)
 
@@ -36,6 +37,8 @@ These use a made-up demo meeting with real model replies.
 <img src="docs/screenshots/phone.webp" alt="A meeting transcript on a phone-sized screen" width="300">
 
 ## Website
+
+**<https://perdieminc.github.io/Quorum/>**
 
 [docs/index.html](docs/index.html) is a one-page site for Quorum. Scrolling drives its animation: the demo meeting passes from speaker to speaker, the app screens rise and change, and the demo plays as audio in each agent's voice. Each animated section shows where you are and offers a way past it, and the animation can be turned off on the page. With reduced motion turned on in your system it is a plain scrolling page. GitHub Pages publishes it from the `docs` folder of `master`.
 
@@ -129,7 +132,7 @@ To use host CLIs without the bridge described below, run Quorum natively with No
 
 ```bash
 # Native Node 24+:
-npm run check
+npm ci && npm run typecheck
 npm test
 # Smoke test against running Docker app, after pulling qwen2.5:0.5b:
 QUORUM_URL=http://127.0.0.1:4710 npm run smoke
@@ -216,18 +219,20 @@ For distinct agent voices, run an OpenAI-compatible Kokoro speech server separat
 
 ## Development
 
-CI lints and tests every push to `master` and every pull request: [Oxlint](https://oxc.rs) for JavaScript, [Ruff](https://docs.astral.sh/ruff/) for the Python speech server, then the syntax check and unit tests.
+CI checks every push to `master` and every pull request: [Oxlint](https://oxc.rs) for TypeScript, [Ruff](https://docs.astral.sh/ruff/) for the Python speech server, a strict type check and the unit tests.
 
 ```bash
-npm ci            # installs the linter; the app itself needs nothing
+npm ci            # installs the linter and type checker; the app itself needs nothing
 npm run lint
 npm run lint:py   # needs uv
-npm run check
+npm run typecheck
 npm test
 npm run dev
 ```
 
-The initial implementation is plain browser JavaScript and Node.js with a single local SQLite state store, HTTP requests, sequential autonomous turns and a per-run turn budget. Only the human can accept a meeting. Pause aborts the active request; model changes are applied between turns. Use one active meeting tab. Stale state saves are rejected with a reload message rather than overwriting another tab.
+The code is TypeScript with no build step. Node 24 runs the server, scripts and tests directly, and the server removes the types from the browser modules as it serves them (`/app.js` is `public/app.ts`). Only erasable TypeScript syntax is allowed, which rules out enums and namespaces, and `npm run typecheck` is what checks types: running the code does not. Shared types are in `src/engine.ts`.
+
+The implementation uses a single local SQLite state store, HTTP requests, sequential autonomous turns and a per-run turn budget. Only the human can accept a meeting. Pause aborts the active request; model changes are applied between turns. Use one active meeting tab. Stale state saves are rejected with a reload message rather than overwriting another tab.
 
 This prototype does not yet include token streaming, automatic voice interruptions, VAD, speaker selection, tool execution via MCP, private agent memory, native desktop packaging, or automated meeting summaries. Skills are instructions only. Real provider and microphone compatibility require manual testing on the target machine. Never expose the local server to the public internet.
 

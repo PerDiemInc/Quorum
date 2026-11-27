@@ -3,8 +3,9 @@ import assert from "node:assert/strict";
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { respond } from "../src/providers.js";
-import { claudeStatus } from "../src/models.js";
+import { respond } from "../src/providers.ts";
+import { claudeStatus } from "../src/models.ts";
+import type { Agent } from "../src/engine.ts";
 
 // A stand-in for the Claude CLI, so these tests need no install, login or network.
 const fake = `#!/usr/bin/env node
@@ -25,9 +26,9 @@ const system = fs.readFileSync(args[args.indexOf('--system-prompt-file') + 1], '
 console.log(JSON.stringify({ args, system, input: fs.readFileSync(0, 'utf8') }));
 `;
 const saved = { ...process.env };
-const agent = { name: "CTO", provider: "claude", model: "" };
+const agent: Pick<Agent, "name" | "provider" | "model"> = { name: "CTO", provider: "claude", model: "" };
 const prompt = { system: "You are CTO", user: '{"goal":"Design API"}' };
-let dir;
+let dir: string;
 before(async () => {
   dir = await mkdtemp(join(tmpdir(), "quorum-test-"));
   await writeFile(join(dir, "claude"), fake);
@@ -75,7 +76,7 @@ test("a missing claude binary is named", async () => {
   enable();
   process.env.CLAUDE_BIN = join(dir, "absent");
   await assert.rejects(respond(agent, prompt), /absent was not found/);
-  assert.match((await claudeStatus()).message, /not found/);
+  assert.match((await claudeStatus()).message!, /not found/);
 });
 test("status reports sign-in without account details", async () => {
   enable();
@@ -84,7 +85,7 @@ test("status reports sign-in without account details", async () => {
   process.env.FAKE_LOGGED_IN = "0";
   const status = await claudeStatus();
   assert.equal(status.ready, false);
-  assert.match(status.message, /claude auth login/);
+  assert.match(status.message!, /claude auth login/);
   assert.doesNotMatch(JSON.stringify(status), /example\.com/);
 });
 test("an unreachable bridge says how to start it", async () => {
@@ -92,5 +93,5 @@ test("an unreachable bridge says how to start it", async () => {
   // Port 1 refuses connections, like a bridge that is not running.
   process.env.QUORUM_CLI_BRIDGE_URL = "http://127.0.0.1:1";
   await assert.rejects(respond(agent, prompt), /npm run bridge/);
-  assert.match((await claudeStatus()).message, /npm run bridge/);
+  assert.match((await claudeStatus()).message!, /npm run bridge/);
 });

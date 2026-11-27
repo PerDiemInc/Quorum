@@ -1,17 +1,25 @@
 import { mentionAt, suggestMentions } from "/engine.js";
 
-/**
- * "@" autocomplete for a text box: arrows choose, Enter or Tab insert, Escape closes.
- * @param {object} options
- * @param {HTMLTextAreaElement} options.input
- * @param {HTMLElement} options.list the element that shows the suggestions
- * @param {() => Array<{name: string}>} options.people who can be tagged right now
- * @param {(person: any) => HTMLElement[]} options.show the contents of one suggestion
- */
-export function createMentions({ input, list, people, show }) {
-  let matches = [],
+interface MentionOptions<Person> {
+  input: HTMLTextAreaElement;
+  /** The element that shows the suggestions. */
+  list: HTMLElement;
+  /** Who can be tagged right now. */
+  people: () => readonly Person[];
+  /** The contents of one suggestion. */
+  show: (person: Person) => HTMLElement[];
+}
+
+/** "@" autocomplete for a text box: arrows choose, Enter or Tab insert, Escape closes. */
+export function createMentions<Person extends { name: string }>({
+  input,
+  list,
+  people,
+  show,
+}: MentionOptions<Person>) {
+  let matches: Person[] = [],
     active = 0,
-    tag = null;
+    tag: ReturnType<typeof mentionAt> = null;
   const close = () => {
     matches = [];
     list.hidden = true;
@@ -19,7 +27,7 @@ export function createMentions({ input, list, people, show }) {
     input.setAttribute("aria-expanded", "false");
     input.removeAttribute("aria-activedescendant");
   };
-  function highlight(index) {
+  function highlight(index: number) {
     active = (index + matches.length) % matches.length;
     [...list.children].forEach((item, i) => {
       item.setAttribute("aria-selected", String(i === active));
@@ -28,8 +36,8 @@ export function createMentions({ input, list, people, show }) {
     input.setAttribute("aria-activedescendant", list.children[active].id);
     list.children[active].scrollIntoView({ block: "nearest" });
   }
-  function choose(person) {
-    const before = input.value.slice(0, tag.start),
+  function choose(person: Person) {
+    const before = input.value.slice(0, tag!.start),
       after = input.value.slice(input.selectionStart).replace(/^ /, "");
     const inserted = "@" + person.name + " ";
     input.value = before + inserted + after;
@@ -80,7 +88,7 @@ export function createMentions({ input, list, people, show }) {
   return {
     close,
     /** Put a tag at the cursor, as when a name is clicked elsewhere on the page. */
-    insert(person) {
+    insert(person: Person) {
       const at = input.selectionStart ?? input.value.length;
       const space = at && !/\s$/.test(input.value.slice(0, at)) ? " " : "";
       tag = { start: at + space.length, query: "" };

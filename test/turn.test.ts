@@ -1,15 +1,21 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { freshTurn } from "../src/turn.js";
-import { normalizeAgent } from "../src/engine.js";
+import { freshTurn } from "../src/turn.ts";
+import { normalizeAgent } from "../src/engine.ts";
+import type { Agent, Prompt } from "../src/engine.ts";
 
 const old = "We should run a two week pilot with fifty cups and measure how many come back each day.";
 const fresh = "Who empties the return bin during the morning rush, and what happens once it is full?";
 const agent = normalizeAgent({ name: "Ops", provider: "ollama" });
 const meeting = { goal: "Cups", participants: [agent], transcript: [{ speaker: "Sales", text: old }] };
-const script = (...replies) => {
-  const calls = [];
-  const ask = async (_agent, prompt, _signal, options) => {
+const script = (...replies: string[]) => {
+  const calls: Array<{ prompt: Prompt; options: { attempt: number } }> = [];
+  const ask = async (
+    _agent: Agent,
+    prompt: Prompt,
+    _signal: AbortSignal | undefined,
+    options: { attempt: number },
+  ) => {
     calls.push({ prompt, options });
     return replies[Math.min(calls.length - 1, replies.length - 1)];
   };

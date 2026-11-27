@@ -3,29 +3,65 @@ import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, delimiter, dirname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { MAX_IMPORT, MAX_SKILL_CHARS, MAX_SKILLS } from "./engine.js";
+import { MAX_IMPORT, MAX_SKILL_CHARS, MAX_SKILLS } from "./engine.ts";
+import type { Skill } from "./engine.ts";
 
 /**
  * Imports agent profiles (Markdown with a name in its front matter, as Claude Code
  * subagents are written) and skills (SKILL.md). Only their text is imported: scripts and
  * files they refer to are left behind, because meeting agents cannot run tools.
- * @typedef {{name: string, description: string, text: string, source: string, truncated: boolean}} Skill
- * @typedef {{name: string, description: string, instructions: string, model: string,
- *   skills: Skill[], source: string, truncated: boolean}} Profile
  */
+export interface ImportedSkill extends Skill {
+  description: string;
+  source: string;
+  truncated: boolean;
+}
+export interface Profile {
+  name: string;
+  description: string;
+  instructions: string;
+  model: string;
+  skills: ImportedSkill[];
+  source: string;
+  truncated: boolean;
+}
+export type Imported =
+  | ({ kind: "skill" } & ImportedSkill)
+  | ({ kind: "agent" } & Profile);
+type Kind = Imported["kind"];
+/** A file found by a scan; its content stays on the server. */
+interface Scanned {
+  id: string;
+  kind: Kind;
+  name: string;
+  description: string;
+  source: string;
+  content: string;
+}
+type Roots = Record<Kind, string[]>;
+type SourceOf = (kind: Kind, root: string, folders: string[]) => string | Promise<string>;
+type FindSkills = (names: string[]) => Promise<ImportedSkill[]>;
+interface GitHubLocation {
+  owner: string;
+  repo: string;
+  ref: string;
+  path: string;
+  /** True when the address points at a single file. */
+  file: boolean;
+}
 
 const MAX_LISTED = 500;
 // Documentation that sits beside profiles but never is one.
 const DOCS = /^(readme|license|licence|contributing|changelog|code_of_conduct|security|claude|agents|index|skill)\.md$/i;
 const MAX_FILE_BYTES = 400_000;
-const fail = (message, status = 400) =>
+const fail = (message: string, status = 400) =>
   Object.assign(new Error(message), { status });
 
 /** Read the front matter of a profile or skill, and return the rest as its body. */
-export function parseDocument(content) {
+export function parseDocument(content: unknown) {
   const text = String(content).replace(/^﻿/, "");
   const match = text.match(/^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/);
-  const fields = {};
+  const fields: Record<string, string> = {};
   if (match) {
     const lines = match[1].split(/\r?\n/);
     for (let i = 0; i < lines.length; i++) {
@@ -53,10 +89,9 @@ export function parseDocument(content) {
     body: (match ? text.slice(match[0].length) : text).trim(),
   };
 }
-const unquote = (value) => value.replace(/^(["'])([\s\S]*)\1$/, "$2");
+const unquote = (value: string) => value.replace(/^(["'])([\s\S]*)\1$/, "$2");
 
-/** @returns {Skill} */
-function toSkill(content, fallbackName, source) {
+function toSkill(content: string, fallbackName: string, source: string): ImportedSkill {
   const { name, description, body } = parseDocument(content);
   const text = body || description;
   return {
@@ -69,19 +104,21 @@ function toSkill(content, fallbackName, source) {
 }
 
 /**
- * @param {string} content
- * @param {string} source
- * @param {(names: string[]) => Promise<Skill[]>} findSkills looks up the skills a profile names
- * @returns {Promise<Profile | null>} null when the file is not an agent profile
+ * @param findSkills looks up the skills a profile names
+ * @returns null when the file is not an agent profile
  */
-async function toProfile(content, source, findSkills) {
+async function toProfile(
+  content: string,
+  source: string,
+  findSkills: FindSkills,
+): Promise<Profile | null> {
   const { name, description, model, skills, body } = parseDocument(content);
   const instructions = body || description;
   if (!name || !instructions) return null;
   return {
     // File-style names such as code-reviewer read better as Code Reviewer.
     name: (/^[a-z0-9]+([-_][a-z0-9]+)*$/.test(name)
-      ? name.replace(/(^|[-_])([a-z0-9])/g, (_, gap, c) => (gap ? " " : "") + c.toUpperCase())
+      ? name.replace(/(^|[-_])([a-z0-9])/g, (_, gap: string, c: string) => (gap ? " " : "") + c.toUpperCase())
       : name
     ).slice(0, 80),
     description,
@@ -95,8 +132,8 @@ async function toProfile(content, source, findSkills) {
 
 // ---- Claude agents and skills installed on this computer ----
 
-function claudeRoots() {
-  const custom = (value) => value.split(delimiter).filter(Boolean);
+function claudeRoots(): Roots {
+  const custom = (value: string) => value.split(delimiter).filter(Boolean);
   const claude = join(homedir(), ".claude");
   return {
     skill: process.env.CLAUDE_SKILLS_DIR
@@ -108,7 +145,13 @@ function claudeRoots() {
   };
 }
 
-async function findFiles(directory, wanted, depth, seen, found) {
+async function findFiles(
+  directory: string,
+  wanted: (name: string) => boolean,
+  depth: number,
+  seen: Set<string>,
+  found: string[],
+) {
   if (depth > 8 || found.length >= MAX_LISTED * 2) return;
   let real, entries;
   try {
@@ -130,7 +173,7 @@ async function findFiles(directory, wanted, depth, seen, found) {
   }
 }
 
-const claudeSource = (kind, root, folders) =>
+const claudeSource = (kind: Kind, root: string, folders: string[]) =>
   kind === "agent"
     ? "Claude agent"
     : basename(root) === "plugins"
@@ -139,21 +182,18 @@ const claudeSource = (kind, root, folders) =>
         ? "Synced Claude skill"
         : "Claude skill";
 
-/** Every readable agent and skill, each with an id that stands in for its path.
- * @param {{agent: string[], skill: string[]}} roots
- * @param {(kind: string, root: string, folders: string[]) => string | Promise<string>} sourceOf
- */
-async function scan(roots, sourceOf) {
-  const items = [],
-    names = new Set(),
-    seen = new Set();
-  for (const kind of ["agent", "skill"]) {
+/** Every readable agent and skill, each with an id that stands in for its path. */
+async function scan(roots: Roots, sourceOf: SourceOf) {
+  const items: Scanned[] = [],
+    names = new Set<string>(),
+    seen = new Set<string>();
+  for (const kind of ["agent", "skill"] as const) {
     const wanted =
       kind === "skill"
-        ? (name) => name === "SKILL.md"
-        : (name) => /\.md$/i.test(name) && !DOCS.test(name);
+        ? (name: string) => name === "SKILL.md"
+        : (name: string) => /\.md$/i.test(name) && !DOCS.test(name);
     for (const root of roots[kind]) {
-      const files = [];
+      const files: string[] = [];
       await findFiles(root, wanted, 0, seen, files);
       for (const file of files) {
         try {
@@ -191,23 +231,26 @@ function scanLibrary() {
   });
 }
 
-const listed = (items) => ({
+const listed = (items: Scanned[]) => ({
   items: items.map(({ content: _content, ...item }) => item),
 });
 export const listLocal = async () => listed(await scanLocal());
 export const listLibrary = async () => listed(await scanLibrary());
 
 /** Browsers choose by id, never by path, so only scanned files can be read. */
-async function readScanned(scanner, ids) {
+async function readScanned(
+  scanner: () => Promise<Scanned[]>,
+  ids: unknown,
+): Promise<{ items: Imported[]; skipped: string[] }> {
   checkSelection(ids);
   const all = await scanner();
-  const findSkills = async (wanted) =>
+  const findSkills = async (wanted: string[]) =>
     wanted.flatMap((name) => {
       const found = all.find((i) => i.kind === "skill" && i.name === name);
       return found ? [toSkill(found.content, found.name, found.source)] : [];
     });
-  const items = [],
-    skipped = [];
+  const items: Imported[] = [],
+    skipped: string[] = [];
   for (const id of ids) {
     const item = all.find((i) => i.id === id);
     if (!item) throw fail("That file is no longer there. Reload the list.", 404);
@@ -221,10 +264,10 @@ async function readScanned(scanner, ids) {
   }
   return { items, skipped };
 }
-export const readLocal = (ids) => readScanned(scanLocal, ids);
-export const readLibrary = (ids) => readScanned(scanLibrary, ids);
+export const readLocal = (ids: unknown) => readScanned(scanLocal, ids);
+export const readLibrary = (ids: unknown) => readScanned(scanLibrary, ids);
 
-function checkSelection(items) {
+function checkSelection(items: unknown): asserts items is string[] {
   if (
     !Array.isArray(items) ||
     !items.length ||
@@ -236,12 +279,12 @@ function checkSelection(items) {
 
 // ---- Agents and skills in GitHub repositories ----
 
-const safeSegment = (part) =>
+const safeSegment = (part: string) =>
   // A decoded slash would let one segment smuggle in a path.
   part && part !== "." && part !== ".." && !/[\p{Cc}\\/]/u.test(part);
 
 /** Accept owner/repo or a github.com address, optionally pointing at a branch and folder. */
-export function parseGitHubURL(input) {
+export function parseGitHubURL(input: unknown): GitHubLocation {
   let text = String(input ?? "").trim();
   if (/^[\w-]+\/[\w.-]+$/.test(text)) text = "https://github.com/" + text;
   else if (/^github\.com\//i.test(text)) text = "https://" + text;
@@ -268,9 +311,9 @@ export function parseGitHubURL(input) {
   return { owner, repo, ref: ref ?? "HEAD", path: path.join("/"), file: kind === "blob" };
 }
 
-const encodePath = (path) => path.split("/").map(encodeURIComponent).join("/");
+const encodePath = (path: string) => path.split("/").map(encodeURIComponent).join("/");
 
-async function github(url, signal) {
+async function github(url: string, signal?: AbortSignal) {
   // Public repositories need no token. Set one to read private repositories.
   const token = process.env.QUORUM_GITHUB_TOKEN;
   let response;
@@ -300,17 +343,20 @@ async function github(url, signal) {
   return response;
 }
 
-const isSkill = (path) => /(^|\/)SKILL\.md$/i.test(path);
-const folderName = (path) => path.split("/").at(-2);
+const isSkill = (path: string) => /(^|\/)SKILL\.md$/i.test(path);
+const folderName = (path: string) => path.split("/").at(-2);
 
-async function repositoryFiles({ owner, repo, ref }, signal) {
-  const tree = await (
+async function repositoryFiles(
+  { owner, repo, ref }: GitHubLocation,
+  signal?: AbortSignal,
+) {
+  const tree = (await (
     await github(
       "https://api.github.com/repos/" +
         owner + "/" + repo + "/git/trees/" + encodeURIComponent(ref) + "?recursive=1",
       signal,
     )
-  ).json();
+  ).json()) as { truncated?: unknown; tree?: Array<{ type: string; path: string }> };
   return {
     truncated: Boolean(tree.truncated),
     paths: (tree.tree ?? []).filter((e) => e.type === "blob").map((e) => e.path),
@@ -318,7 +364,7 @@ async function repositoryFiles({ owner, repo, ref }, signal) {
 }
 
 /** Pick out the profiles and skills among a repository's file paths. */
-function classify(paths, folder, repo) {
+function classify(paths: string[], folder: string, repo: string) {
   const within = paths.filter(
     (p) => /\.md$/i.test(p) && (!folder || p.startsWith(folder + "/")),
   );
@@ -327,7 +373,7 @@ function classify(paths, folder, repo) {
   // A skill's own helper prompts are part of the skill, not agents.
   const others = within.filter(
     (p) =>
-      !DOCS.test(p.split("/").at(-1)) &&
+      !DOCS.test(p.split("/").at(-1)!) &&
       !skillFolders.some((prefix) => prefix && p.startsWith(prefix)),
   );
   let agents = others.filter((p) => /(^|\/)agents\//i.test(p));
@@ -341,20 +387,20 @@ function classify(paths, folder, repo) {
     ...agents.map((path) => ({
       path,
       kind: "agent",
-      name: path.split("/").at(-1).replace(/\.md$/i, ""),
+      name: path.split("/").at(-1)!.replace(/\.md$/i, ""),
     })),
     ...skills.map((path) => ({ path, kind: "skill", name: folderName(path) ?? repo })),
   ];
 }
 
-export async function listGitHub(address, signal) {
+export async function listGitHub(address: unknown, signal?: AbortSignal) {
   const location = parseGitHubURL(address);
   const { owner, repo, ref, path, file } = location;
   const result = { repo: owner + "/" + repo, ref, truncated: false };
   if (file) {
     if (!/\.md$/i.test(path)) throw fail("Choose a Markdown file.");
     const kind = isSkill(path) ? "skill" : "agent";
-    const name = kind === "skill" ? (folderName(path) ?? repo) : path.split("/").at(-1).replace(/\.md$/i, "");
+    const name = kind === "skill" ? (folderName(path) ?? repo) : path.split("/").at(-1)!.replace(/\.md$/i, "");
     return { ...result, items: [{ path, kind, name }] };
   }
   const files = await repositoryFiles(location, signal);
@@ -366,14 +412,18 @@ export async function listGitHub(address, signal) {
   };
 }
 
-export async function readGitHub(address, paths, signal) {
+export async function readGitHub(
+  address: unknown,
+  paths: unknown,
+  signal?: AbortSignal,
+): Promise<{ items: Imported[]; skipped: string[] }> {
   const location = parseGitHubURL(address);
   const { owner, repo, ref } = location;
   checkSelection(paths);
   if (!paths.every((p) => /\.md$/i.test(p) && p.split("/").every(safeSegment)))
     throw fail("Only Markdown files inside the repository can be imported.");
   const source = "github.com/" + owner + "/" + repo;
-  const download = async (path) => {
+  const download = async (path: string) => {
     const response = await github(
       "https://raw.githubusercontent.com/" +
         owner + "/" + repo + "/" + encodeURIComponent(ref) + "/" + encodePath(path),
@@ -383,20 +433,20 @@ export async function readGitHub(address, paths, signal) {
     if (content.length > MAX_FILE_BYTES) throw fail(path + " is too large to import.");
     return content;
   };
-  const skillFrom = async (path) =>
+  const skillFrom = async (path: string) =>
     toSkill(await download(path), folderName(path) ?? repo, source);
-  let files;
+  let files: Awaited<ReturnType<typeof repositoryFiles>> | undefined;
   // Skills a profile names are taken from the same repository.
-  const findSkills = async (wanted) => {
+  const findSkills = async (wanted: string[]) => {
     files ??= await repositoryFiles(location, signal);
     const found = wanted.flatMap((name) => {
-      const path = files.paths.find((p) => isSkill(p) && folderName(p) === name);
+      const path = files!.paths.find((p) => isSkill(p) && folderName(p) === name);
       return path ? [path] : [];
     });
     return Promise.all(found.map(skillFrom));
   };
-  const items = [],
-    skipped = [];
+  const items: Imported[] = [],
+    skipped: string[] = [];
   for (const path of paths) {
     if (isSkill(path)) items.push({ kind: "skill", ...(await skillFrom(path)) });
     else {

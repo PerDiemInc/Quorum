@@ -1,27 +1,97 @@
 import { MAX_IMPORT } from "/engine.js";
+import type { Agent, Provider, Skill } from "/engine.js";
 
-const $ = (id) => document.getElementById(id);
-const LOCAL_MODELS = ["ollama", "openai-compatible"];
+/** A skill as the server reads it. */
+export interface ImportedSkill extends Skill {
+  kind: "skill";
+  truncated: boolean;
+  instructions?: never;
+}
+/** An agent profile as the server reads it. */
+export interface ImportedProfile {
+  kind: "agent";
+  name: string;
+  instructions: string;
+  model: string;
+  skills: Skill[];
+  source: string;
+  truncated: boolean;
+  text?: never;
+}
+interface ReadResult {
+  items: Array<ImportedSkill | ImportedProfile>;
+  skipped: string[];
+}
+type Kind = "agent" | "skill";
+/** What the included and local lists answer with. */
+interface ScannedList {
+  items: Array<{ id: string; kind: Kind; name: string; description: string; source: string }>;
+}
+interface GitHubList {
+  repo: string;
+  truncated: boolean;
+  items: Array<{ path: string; kind: Kind; name: string }>;
+}
+interface ListedItem {
+  key: string;
+  kind: Kind;
+  name: string;
+  detail: string;
+}
+/** What the dialog needs from the page. */
+export interface ImportApp {
+  node: <Tag extends keyof HTMLElementTagNameMap>(
+    tag: Tag,
+    text?: string,
+    cls?: string,
+  ) => HTMLElementTagNameMap[Tag];
+  checkbox: (input: HTMLInputElement, ...children: Node[]) => HTMLElement;
+  setSelected: (el: HTMLElement, selected: boolean) => void;
+  chip: (text: string, tone?: string) => HTMLElement;
+  request: <T>(path: string, method?: string, data?: object) => Promise<T>;
+  agents: () => Array<Pick<Agent, "id" | "name" | "provider" | "skills">>;
+  providerChoices: (select: HTMLSelectElement) => void;
+  /** Resolves to the agent's name. */
+  addSkills: (target: string, skills: ImportedSkill[]) => Promise<string>;
+  addAgents: (
+    profiles: ImportedProfile[],
+    provider: string,
+  ) => Promise<{ added: number; updated: number }>;
+}
+
+/** The elements in index.html that are used as more than an HTMLElement. */
+interface Elements {
+  "import-add": HTMLButtonElement;
+  "import-dialog": HTMLDialogElement;
+  "import-github": HTMLFormElement & {
+    readonly elements: HTMLFormControlsCollection & { url: HTMLInputElement };
+  };
+  "import-provider": HTMLSelectElement;
+  "import-search": HTMLInputElement;
+  "import-target": HTMLSelectElement;
+}
+const $ = <Id extends string>(id: Id) =>
+  document.getElementById(id) as Id extends keyof Elements ? Elements[Id] : HTMLElement;
+const LOCAL_MODELS: ReadonlyArray<Provider | undefined> = ["ollama", "openai-compatible"];
 const PRESELECT = 20;
-const plural = (count, word) => count + " " + word + (count === 1 ? "" : "s");
+const plural = (count: number, word: string) => count + " " + word + (count === 1 ? "" : "s");
 
-/**
- * The dialog that imports agent profiles and skills from GitHub or Claude.
- * @param {object} app
- * @param {(tag: string, text?: string, cls?: string) => HTMLElement} app.node
- * @param {(path: string, method?: string, data?: object) => Promise<any>} app.request
- * @param {() => Array<{id: string, name: string, provider: string, skills: any[]}>} app.agents
- * @param {(select: HTMLSelectElement) => void} app.providerChoices
- * @param {(target: string, skills: any[]) => Promise<string>} app.addSkills resolves to the agent's name
- * @param {(profiles: any[], provider: string) => Promise<{added: number, updated: number}>} app.addAgents
- */
-export function createImport(app) {
+/** The dialog that imports agent profiles and skills from GitHub or Claude. */
+export function createImport(app: ImportApp) {
   const { node, checkbox, setSelected, chip, request, agents } = app;
-  const SOURCES = ["library", "github", "local"];
-  let source = "github";
-  /** @type {Record<string, {key: string, kind: string, name: string, detail: string}[] | null>} */
-  const lists = { library: null, github: null, local: null };
-  const selected = { library: new Set(), github: new Set(), local: new Set() };
+  const SOURCES = ["library", "github", "local"] as const;
+  type Source = (typeof SOURCES)[number];
+  let source: Source = "github";
+  const lists: Record<Source, ListedItem[] | null> = {
+    library: null,
+    github: null,
+    local: null,
+  };
+  const selected: Record<Source, Set<string>> = {
+    library: new Set(),
+    github: new Set(),
+    local: new Set(),
+  };
   let address = "";
 
   const status = (message = "", failed = false) => {
@@ -36,10 +106,10 @@ export function createImport(app) {
       (item.name + " " + item.detail).toLowerCase().includes(query),
     );
   };
-  const read = (keys) =>
+  const read = (keys: string[]) =>
     source === "github"
-      ? request("/api/import/github/fetch", "POST", { url: address, paths: keys })
-      : request("/api/import/" + source, "POST", { ids: keys });
+      ? request<ReadResult>("/api/import/github/fetch", "POST", { url: address, paths: keys })
+      : request<ReadResult>("/api/import/" + source, "POST", { ids: keys });
 
   function updateChoices() {
     const items = chosen();
@@ -61,7 +131,7 @@ export function createImport(app) {
     $("import-all").hidden = !shown().length;
   }
 
-  function row(item) {
+  function row(item: ListedItem) {
     const el = node("div", undefined, "import-item"),
       input = node("input"),
       text = node("span", undefined, "info"),
@@ -98,7 +168,7 @@ export function createImport(app) {
         content.hidden = false;
         preview.textContent = "Hide";
       } catch (e) {
-        status(e.message, true);
+        status((e as Error).message, true);
       } finally {
         preview.disabled = false;
       }
@@ -131,7 +201,7 @@ export function createImport(app) {
     updateChoices();
   }
 
-  async function show(next) {
+  async function show(next: Source) {
     source = next;
     for (const name of SOURCES) setSelected($("import-tab-" + name), name === next);
     $("import-github").hidden = next !== "github";
@@ -140,7 +210,7 @@ export function createImport(app) {
     render();
     if (next !== "github" && !lists[next]) {
       try {
-        const { items } = await request("/api/import/" + next);
+        const { items } = await request<ScannedList>("/api/import/" + next);
         lists[next] = items.map((i) => ({
           key: i.id,
           kind: i.kind,
@@ -149,7 +219,7 @@ export function createImport(app) {
         }));
       } catch (e) {
         lists[next] = [];
-        status(e.message, true);
+        status((e as Error).message, true);
       }
       if (source === next) render();
     }
@@ -165,16 +235,16 @@ export function createImport(app) {
   });
   $("import-github").addEventListener("submit", async (e) => {
     e.preventDefault();
-    const url = e.currentTarget.elements.url.value.trim();
+    const url = (e.currentTarget as Elements["import-github"]).elements.url.value.trim();
     if (!url) {
       status("Paste a GitHub address first.", true);
       return;
     }
-    const button = e.currentTarget.querySelector("button");
+    const button = (e.currentTarget as HTMLFormElement).querySelector("button")!;
     button.disabled = true;
     status("Fetching from GitHub…");
     try {
-      const result = await request("/api/import/github", "POST", { url });
+      const result = await request<GitHubList>("/api/import/github", "POST", { url });
       address = url;
       lists.github = result.items.map((i) => ({
         key: i.path,
@@ -209,7 +279,7 @@ export function createImport(app) {
       lists.github = null;
       selected.github.clear();
       render();
-      status(error.message, true);
+      status((error as Error).message, true);
     } finally {
       button.disabled = false;
     }
@@ -227,7 +297,7 @@ export function createImport(app) {
       const { items, skipped } = await read(keys);
       const profiles = items.filter((i) => i.kind === "agent"),
         skills = items.filter((i) => i.kind === "skill"),
-        notes = [];
+        notes: string[] = [];
       // Skills go first: if they do not fit, nothing has been added yet.
       if (skills.length) {
         const name = await app.addSkills(target, skills);
@@ -250,12 +320,12 @@ export function createImport(app) {
       render();
       status(notes.join(" "), !items.length);
     } catch (e) {
-      status(e.message, true);
+      status((e as Error).message, true);
       updateChoices();
     }
   });
 
-  function fillTargets(target) {
+  function fillTargets(target: string) {
     const options = [{ id: "", name: "The new agent you are creating" }, ...agents()];
     $("import-target").replaceChildren(
       ...options.map((a) => {
@@ -268,10 +338,10 @@ export function createImport(app) {
   }
 
   /**
-   * @param {string} target the agent that receives skills; blank for the one being created
-   * @param {'library' | 'github' | 'local'} from the tab to start on
+   * `target` is the agent that receives skills; blank for the one being created.
+   * `from` is the tab to start on.
    */
-  return function open(target, from) {
+  return function open(target: string, from: Source) {
     fillTargets(target);
     app.providerChoices($("import-provider"));
     // Files may have changed since the dialog was last open.

@@ -15,11 +15,94 @@ import {
   addParticipant,
   MAX_PARTICIPANTS,
 } from "/engine.js";
+import type { Agent, Meeting, Message, Provider, Skill, State } from "/engine.js";
 import { createImport } from "/import.js";
+import type { ImportedProfile } from "/import.js";
 import { createMentions } from "/mentions.js";
 
-const $ = (id) => document.getElementById(id);
-const names = {
+/** What /api/config reports. */
+interface Config {
+  whisper: boolean;
+  kokoro: boolean;
+  cli: boolean;
+}
+/** What /api/claude reports. */
+interface ClaudeStatus {
+  ready: boolean;
+  disabled?: boolean;
+  message?: string;
+}
+interface CliStatus {
+  installed: boolean;
+  authenticated: boolean;
+  enabled: boolean;
+  version?: string;
+}
+/** What /api/models reports. */
+interface ModelSettings {
+  hostAccess: { checkedAt: string; claude?: CliStatus; codex?: CliStatus } | null;
+  cliBridge: boolean;
+  ollama: { available: boolean; models: Array<{ name: string; size: number }> };
+  inference: { available: boolean; models: Array<{ id: string }> };
+  claude: CliStatus;
+  codex: CliStatus;
+  pull: {
+    name: string;
+    status: string;
+    completed?: number;
+    total?: number;
+    error?: string;
+  } | null;
+}
+/** What /api/turn answers with; a skipped turn has no text. */
+interface TurnResult {
+  text: string;
+  model?: string;
+  skipped?: boolean;
+}
+type RequestError = Error & { status?: number };
+type View = "meetings" | "agents" | "settings";
+type AgentList = "invite" | "agent";
+/** A transcript play button keeps the message it reads. */
+type PlayButton = HTMLButtonElement & { message: Message };
+
+/** A form whose named controls are known from index.html. */
+type Form<Controls> = HTMLFormElement & {
+  readonly elements: HTMLFormControlsCollection & Controls;
+};
+/** The elements in index.html that are used as more than an HTMLElement. */
+interface Elements {
+  accept: HTMLButtonElement;
+  "agent-dialog": HTMLDialogElement;
+  "agent-form": Form<{
+    name: HTMLInputElement;
+    provider: HTMLSelectElement;
+    model: HTMLInputElement;
+    voice: HTMLSelectElement;
+    skills: HTMLInputElement;
+  }>;
+  "agent-search": HTMLInputElement;
+  "create-agent": HTMLDialogElement;
+  "history-search": HTMLInputElement;
+  "install-model-form": Form<{ model: HTMLInputElement }>;
+  "invite-more": HTMLButtonElement;
+  "invite-search": HTMLInputElement;
+  "join-dialog": HTMLDialogElement;
+  "join-search": HTMLInputElement;
+  limit: HTMLInputElement;
+  "meeting-form": Form<{ goal: HTMLTextAreaElement }>;
+  message: HTMLTextAreaElement;
+  "message-form": Form<{ message: HTMLTextAreaElement }>;
+  pause: HTMLButtonElement;
+  record: HTMLButtonElement;
+  "refresh-models": HTMLButtonElement;
+  resume: HTMLButtonElement;
+  "starter-team": HTMLButtonElement;
+  "voice-output": HTMLInputElement;
+}
+const $ = <Id extends string>(id: Id) =>
+  document.getElementById(id) as Id extends keyof Elements ? Elements[Id] : HTMLElement;
+const names: Record<Provider, string> = {
   demo: "Demo (no model)",
   ollama: "Ollama (local)",
   "openai-compatible": "OpenAI-compatible / Hugging Face",
@@ -27,21 +110,25 @@ const names = {
   codex: "ChatGPT / Codex CLI",
 };
 // The provider new agents start on; chosen from what is actually connected.
-let preferredProvider = "demo";
-let state = { agents: [], meetings: [] },
-  config = {},
-  current = null,
-  running = null,
+let preferredProvider: Provider = "demo";
+let state: State = { agents: [], meetings: [] },
+  config: Partial<Config> = {},
+  current: Meeting | null = null,
+  running: AbortController | null = null,
   revision = 0,
-  recording = null,
-  /** @type {{id: string, turn: AbortController} | null} */
-  speaker = null;
+  recording: MediaRecorder | null = null,
+  speaker: { id: string; turn: AbortController } | null = null;
 let saveQueue = Promise.resolve();
 let stateVersion = 0;
 function error(message = "") {
   $("error").textContent = message;
 }
-async function request(path, method = "GET", data, signal) {
+async function request<T>(
+  path: string,
+  method = "GET",
+  data?: unknown,
+  signal?: AbortSignal,
+): Promise<T> {
   const res = await fetch(path, {
     method,
     signal,
@@ -52,46 +139,50 @@ async function request(path, method = "GET", data, signal) {
           body: JSON.stringify(data),
         }),
   });
-  const json = await res.json();
+  const json: unknown = await res.json();
   if (!res.ok)
-    throw Object.assign(new Error(json.error ?? "HTTP " + res.status), {
-      status: res.status,
-    });
-  return json;
+    throw Object.assign(
+      new Error((json as { error?: string }).error ?? "HTTP " + res.status),
+      { status: res.status },
+    );
+  return json as T;
 }
 function save() {
   const snapshot = JSON.parse(JSON.stringify(state));
   saveQueue = saveQueue
     .catch(() => {})
     .then(async () => {
-      const result = await request("/api/state", "PUT", {
+      const result = await request<{ revision: number }>("/api/state", "PUT", {
         ...snapshot,
         _revision: stateVersion,
       });
       stateVersion = result.revision;
     })
-    .catch((e) => error("Could not save: " + e.message));
+    .catch((e: Error) => error("Could not save: " + e.message));
   return saveQueue;
 }
-/** @param {{provider: string, model: string}} agent */
-function modelLabel({ provider, model }) {
+function modelLabel({ provider, model }: Pick<Agent, "provider" | "model">) {
   if (provider === "demo") return names[provider];
   return names[provider] + " · " + (model || "Auto model");
 }
-function node(tag, text, cls) {
+function node<Tag extends keyof HTMLElementTagNameMap>(
+  tag: Tag,
+  text?: string,
+  cls?: string,
+) {
   const el = document.createElement(tag);
   if (text !== undefined) el.textContent = text;
   if (cls) el.className = cls;
   return el;
 }
-function button(text, fn, variant = "secondary") {
+function button(text: string, fn: () => void, variant = "secondary") {
   const b = node("button", text, "button button--sm button--" + variant);
   b.type = "button";
   b.addEventListener("click", fn);
   return b;
 }
 /** Initials on a color that stays the same for a given name. */
-function avatar(name) {
+function avatar(name: string) {
   const tone = [...name].reduce((sum, c) => sum + c.charCodeAt(0), 0) % 6;
   const el = node("span", undefined, "avatar avatar--md tone-" + tone);
   el.setAttribute("aria-hidden", "true");
@@ -108,24 +199,27 @@ function avatar(name) {
   );
   return el;
 }
-function chip(text, tone) {
+function chip(text: string, tone?: string) {
   return node(
     "span",
     text,
     "chip chip--sm" + (tone ? " chip--soft chip--" + tone : ""),
   );
 }
-function empty(title, text) {
+function empty(title: string, text: string) {
   const el = node("div", undefined, "empty-state");
   el.append(node("strong", title), node("span", text));
   return el;
 }
-function agentInfo(agent, detail) {
+function agentInfo(agent: Pick<Agent, "name">, detail: string) {
   const el = node("span", undefined, "info");
   el.append(node("strong", agent.name), node("small", detail));
   return el;
 }
-function svg(paths, attributes = {}) {
+function svg(
+  paths: ReadonlyArray<readonly [d: string, cls?: string]>,
+  attributes: Record<string, string> = {},
+) {
   const ns = "http://www.w3.org/2000/svg";
   const el = document.createElementNS(ns, "svg");
   el.setAttribute("viewBox", "0 0 24 24");
@@ -139,9 +233,9 @@ function svg(paths, attributes = {}) {
   }
   return el;
 }
-const icon = (path) => svg([[path, "fill"]]);
+const icon = (path: string) => svg([[path, "fill"]]);
 /** HeroUI checkbox markup around a native input, so forms and keyboards keep working. */
-function checkbox(input, ...children) {
+function checkbox(input: HTMLInputElement, ...children: Node[]) {
   const label = node("label", undefined, "checkbox"),
     content = node("span", undefined, "checkbox__content"),
     control = node("span", undefined, "checkbox__control"),
@@ -159,21 +253,20 @@ function checkbox(input, ...children) {
 }
 /** HeroUI styles selection from an attribute; keep it in step with the native inputs. */
 function syncChoices() {
-  for (const el of document.querySelectorAll(".checkbox, .switch"))
-    el.dataset.selected = String(el.querySelector("input").checked);
+  for (const el of document.querySelectorAll<HTMLElement>(".checkbox, .switch"))
+    el.dataset.selected = String(el.querySelector("input")!.checked);
 }
 document.addEventListener("change", syncChoices);
 /** Mark one tab or toggle in a HeroUI tab list as chosen. */
-function setSelected(el, selected) {
+function setSelected(el: HTMLElement, selected: boolean) {
   el.dataset.selected = String(selected);
   el.setAttribute("aria-pressed", String(selected));
 }
-const groupOf = (agent) => agent.category || (agent.source ? "Imported" : "Other");
+const groupOf = (agent: Agent) => agent.category || (agent.source ? "Imported" : "Other");
 const GROUPS = ["Build", "Product", "Grow", "Run", "Imported", "Other"];
-const chosenGroup = { invite: "All", agent: "All" };
-/** Buttons that narrow a list of agents to one group.
- * @param {'invite' | 'agent'} list @param {() => void} apply */
-function renderFilters(list, apply) {
+const chosenGroup: Record<AgentList, string> = { invite: "All", agent: "All" };
+/** Buttons that narrow a list of agents to one group. */
+function renderFilters(list: AgentList, apply: () => void) {
   const present = GROUPS.filter((g) => state.agents.some((a) => groupOf(a) === g));
   if (!present.includes(chosenGroup[list])) chosenGroup[list] = "All";
   $(list + "-filter").replaceChildren(
@@ -185,7 +278,7 @@ function renderFilters(list, apply) {
           chosenGroup[list] = group;
           renderFilters(list, apply);
           apply();
-          $(list + "-filter").querySelector("[aria-pressed=true]").focus();
+          $(list + "-filter").querySelector<HTMLElement>("[aria-pressed=true]")!.focus();
         },
         active ? "primary" : "tertiary",
       );
@@ -194,8 +287,8 @@ function renderFilters(list, apply) {
     }),
   );
 }
-function matches(agent, list) {
-  const query = $(list + "-search").value.trim().toLowerCase();
+function matches(agent: Agent, list: AgentList) {
+  const query = ($(list + "-search") as HTMLInputElement).value.trim().toLowerCase();
   return (
     (chosenGroup[list] === "All" || groupOf(agent) === chosenGroup[list]) &&
     [agent.name, agent.instructions, ...agent.skills.map((s) => s.name)].some((text) =>
@@ -205,15 +298,20 @@ function matches(agent, list) {
 }
 /** Hidden choices stay selected, so searching never loses a pick. */
 function filterInvite() {
-  for (const label of $("invite").querySelectorAll(".checkbox")) {
-    const agent = state.agents.find((a) => a.id === label.querySelector("input").value);
+  for (const label of $("invite").querySelectorAll<HTMLElement>(".checkbox")) {
+    const agent = state.agents.find((a) => a.id === label.querySelector("input")!.value);
     label.hidden = !agent || !matches(agent, "invite");
   }
 }
-const voiceName = (id) =>
+const voiceName = (id: string) =>
   voices.find(([voice]) => voice === id)?.[1] ?? id;
 /** Fill a voice list. Voices other agents hold are labeled, or disabled when asked. */
-function voiceOptions(select, selected, others, { lockUsed = false } = {}) {
+function voiceOptions(
+  select: HTMLSelectElement,
+  selected: string,
+  others: Agent[],
+  { lockUsed = false } = {},
+) {
   const ids = voices.map(([id]) => id);
   if (selected && !ids.includes(selected)) ids.push(selected);
   const options = ids.map((id) => {
@@ -235,7 +333,7 @@ function voiceOptions(select, selected, others, { lockUsed = false } = {}) {
   select.value = selected;
 }
 
-function modelOptions(select, selected) {
+function modelOptions(select: HTMLSelectElement, selected: string) {
   select.replaceChildren(
     ...providers.map((p) => {
       const option = node("option", names[p]);
@@ -250,7 +348,7 @@ function modelOptions(select, selected) {
 function renderAgents() {
   const invite = $("invite");
   const picked = new Set(
-    [...invite.querySelectorAll("input:checked")].map((x) => x.value),
+    [...invite.querySelectorAll<HTMLInputElement>("input:checked")].map((x) => x.value),
   );
   invite.replaceChildren();
   for (const a of state.agents) {
@@ -277,7 +375,7 @@ $("agent-search").addEventListener("input", () => renderAgentDirectory());
 $("invite-shown").addEventListener("click", () => {
   let room = 12 - $("invite").querySelectorAll("input:checked").length;
   for (const label of $("invite").querySelectorAll(".checkbox:not([hidden])")) {
-    const input = label.querySelector("input");
+    const input = label.querySelector("input")!;
     if (!input.checked && room > 0) {
       input.checked = true;
       room--;
@@ -333,7 +431,8 @@ $("history-search").addEventListener("input", renderHistory);
 function updateInviteSelection() {
   const count = $("invite").querySelectorAll("input:checked").length;
   $("selection-count").textContent = count ? count + " / 12 selected" : "Choose at least one agent";
-  $("meeting-form").querySelector('button[type="submit"]').disabled = count === 0 || count > 12;
+  $("meeting-form").querySelector<HTMLButtonElement>('button[type="submit"]')!.disabled =
+    count === 0 || count > 12;
   const availableIds = new Set(state.agents.map((agent) => agent.id));
   $("reuse-team").hidden = !state.meetings.at(-1)?.participants.some((agent) => availableIds.has(agent.id));
 }
@@ -346,8 +445,8 @@ $("reuse-team").addEventListener("click", () => {
   updateInviteSelection();
 });
 /** Participants whose settings are open, so re-rendering does not close them. */
-const openSettings = new Set();
-function field(labelText, control) {
+const openSettings = new Set<string>();
+function field(labelText: string, control: HTMLElement) {
   const label = node("label", undefined, "field");
   control.className = "input input--secondary input--full-width";
   label.append(node("span", labelText, "label"), control);
@@ -378,9 +477,9 @@ function renderTeam() {
     model.value = a.model;
     model.placeholder = "Auto model";
     model.disabled = a.provider === "demo";
-    const describe = () => (info.querySelector("small").textContent = modelLabel(a));
+    const describe = () => (info.querySelector("small")!.textContent = modelLabel(a));
     select.addEventListener("change", () => {
-      a.provider = select.value;
+      a.provider = select.value as Provider;
       a.model = model.value = "";
       model.disabled = a.provider === "demo";
       describe();
@@ -399,7 +498,7 @@ function renderTeam() {
     );
     voice.addEventListener("change", () => {
       // Picking a voice someone else has swaps the two, so each stays unique.
-      const other = current.participants.find(
+      const other = current!.participants.find(
         (p) => p !== a && p.voice === voice.value,
       );
       if (other) other.voice = a.voice;
@@ -430,12 +529,12 @@ function renderTeam() {
     current.participants.length + " of " + MAX_PARTICIPANTS;
 }
 function renderMeetingAgents() {
-  $("meeting-agents").textContent = current.participants
+  $("meeting-agents").textContent = current!.participants
     .map((agent) => agent.name)
     .join(", ");
 }
 /** Take an agent out of the open meeting; the library and transcript are untouched. */
-function removeFromCall(id) {
+function removeFromCall(id: string) {
   if (!current || current.status === "accepted") return;
   if (current.participants.length === 1) return;
   const removed = removeParticipant(current, id);
@@ -456,8 +555,8 @@ function removeFromCall(id) {
 /** Library agents not in the meeting, preceded by those removed from it. A removed
  * agent comes back as it left, with any model or voice chosen for this meeting. */
 function joinable() {
-  const present = new Set(current.participants.map((p) => p.id));
-  const left = (current.removedParticipants ?? []).filter((p) => !present.has(p.id));
+  const present = new Set(current!.participants.map((p) => p.id));
+  const left = (current!.removedParticipants ?? []).filter((p) => !present.has(p.id));
   const gone = new Set(left.map((p) => p.id));
   return [
     ...left.map((agent) => ({ agent, left: true })),
@@ -510,13 +609,13 @@ function renderJoinList() {
     : current.participants.length + " of " + MAX_PARTICIPANTS + " in the meeting";
 }
 /** Bring an agent in, even mid-discussion: it speaks when the rotation reaches it. */
-function joinCall(source) {
+function joinCall(source: Agent) {
   if (!current || current.status === "accepted") return;
   const agent = structuredClone(source);
   try {
     addParticipant(current, agent);
   } catch (e) {
-    $("join-count").textContent = e.message;
+    $("join-count").textContent = (e as Error).message;
     return;
   }
   // The newcomer is last, so everyone already there keeps their voice.
@@ -535,7 +634,10 @@ function joinCall(source) {
   );
   renderJoinList();
   // The button that had focus is gone, so keep the keyboard in the list.
-  ($("join-list").querySelector("button:not([disabled])") ?? $("join-close")).focus();
+  (
+    $("join-list").querySelector<HTMLButtonElement>("button:not([disabled])") ??
+    $("join-close")
+  ).focus();
 }
 $("invite-more").addEventListener("click", () => {
   if (!current) return;
@@ -559,7 +661,11 @@ function renderTranscript() {
       content = node("div", undefined, "message-body"),
       meta = node("div", undefined, "meta"),
       line = node("div", undefined, "bubble-line"),
-      listen = node("button", undefined, "play button button--ghost button--sm button--icon-only");
+      listen = node(
+        "button",
+        undefined,
+        "play button button--ghost button--sm button--icon-only",
+      ) as PlayButton;
     meta.append(node("strong", m.speaker));
     if (m.model) meta.append(node("span", m.model));
     if (m.at)
@@ -591,9 +697,9 @@ function renderTranscript() {
   $("transcript").scrollTop = $("transcript").scrollHeight;
 }
 /** A message body with the tags of people in this meeting set apart. */
-function bubble(text) {
+function bubble(text: string) {
   const el = node("p", undefined, "bubble");
-  const tagged = findMentions(text, current.participants)
+  const tagged = findMentions(text, current!.participants)
     .map((p) => p.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
     .sort((a, b) => b.length - a.length);
   if (!tagged.length) el.textContent = text;
@@ -611,8 +717,8 @@ const mentions = createMentions({
   show: (a) => [avatar(a.name), agentInfo(a, modelLabel(a))],
 });
 /** The message being read aloud from its play button, if any. */
-let playback = null;
-function showPlayState(el) {
+let playback: { message: Message; ctrl: AbortController } | null = null;
+function showPlayState(el: PlayButton) {
   const active = playback?.message === el.message;
   el.classList.toggle("playing", active);
   el.replaceChildren(
@@ -627,14 +733,15 @@ function showPlayState(el) {
   );
 }
 function updatePlayButtons() {
-  for (const el of $("transcript").querySelectorAll(".play")) showPlayState(el);
+  for (const el of $("transcript").querySelectorAll<PlayButton>(".play"))
+    showPlayState(el);
 }
 function stopPlayback() {
   playback?.ctrl.abort();
   playback = null;
   updatePlayButtons();
 }
-async function play(message) {
+async function play(message: Message) {
   if (playback?.message === message) {
     stopPlayback();
     return;
@@ -653,12 +760,12 @@ async function play(message) {
   const voice =
     message.speaker === "Host"
       ? hostVoice
-      : (current.participants.find((a) => a.name === message.speaker)?.voice ??
+      : (current!.participants.find((a) => a.name === message.speaker)?.voice ??
         "");
   try {
     await speak(message.text, voice, ctrl.signal);
   } catch (e) {
-    if (!ctrl.signal.aborted) error(e.message);
+    if (!ctrl.signal.aborted) error((e as Error).message);
   } finally {
     if (playback?.ctrl === ctrl) {
       playback = null;
@@ -682,16 +789,16 @@ function renderStatus(message = "") {
     Boolean(running) || Boolean(recording) || current.status === "accepted";
   $("pause").disabled = !running;
   $("accept").disabled = current.status === "accepted" || Boolean(recording);
-  for (const remove of $("team").querySelectorAll(".remove-agent")) {
+  for (const remove of $("team").querySelectorAll<HTMLButtonElement>(".remove-agent")) {
     const last = current.participants.length === 1;
     remove.disabled = last || current.status === "accepted";
     remove.title = last ? "A meeting needs at least one agent" : "";
   }
-  for (const ask of $("team").querySelectorAll(".tag-agent"))
+  for (const ask of $("team").querySelectorAll<HTMLButtonElement>(".tag-agent"))
     ask.disabled = current.status === "accepted";
   $("invite-more").disabled = current.status === "accepted";
   $("record").disabled = current.status === "accepted" || !config.whisper;
-  $("message-form").querySelector("button[type=submit]").disabled =
+  $("message-form").querySelector<HTMLButtonElement>("button[type=submit]")!.disabled =
     current.status === "accepted" || Boolean(recording);
 }
 function clearSpeaker() {
@@ -709,7 +816,7 @@ function pause() {
   renderStatus();
   void save();
 }
-function openMeeting(m) {
+function openMeeting(m: Meeting) {
   mentions.close();
   if (recording) {
     error("Finish recording first.");
@@ -719,7 +826,7 @@ function openMeeting(m) {
   pause();
   current = m;
   openSettings.clear();
-  document.querySelector(".meeting-details").open = false;
+  document.querySelector<HTMLDetailsElement>(".meeting-details")!.open = false;
   if (current.status === "running") current.status = "paused";
   $("new-panel").hidden = true;
   $("meeting-panel").hidden = false;
@@ -750,8 +857,8 @@ function newMeeting() {
   renderHistory();
   error();
 }
-function addMessage(speaker, text, model) {
-  current.transcript.push({
+function addMessage(speaker: string, text: string, model?: string) {
+  current!.transcript.push({
     speaker,
     text,
     model,
@@ -760,8 +867,8 @@ function addMessage(speaker, text, model) {
   renderTranscript();
   void save();
 }
-function localSpeak(text, voice, signal) {
-  return new Promise((resolve, reject) => {
+function localSpeak(text: string, voice: string, signal: AbortSignal) {
+  return new Promise<void>((resolve, reject) => {
     if (!window.speechSynthesis || signal.aborted) {
       resolve();
       return;
@@ -802,11 +909,11 @@ function localSpeak(text, voice, signal) {
     window.speechSynthesis.speak(utterance);
   });
 }
-async function speak(text, voice, signal) {
+async function speak(text: string, voice: string, signal: AbortSignal) {
   const spoken = speakable(text);
   if (!spoken) return;
   if (!config.kokoro) return localSpeak(spoken, voice, signal);
-  const synthesize = async (part) => {
+  const synthesize = async (part: string) => {
     const res = await fetch("/api/speech", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -825,7 +932,7 @@ async function speak(text, voice, signal) {
     await next;
   } catch (e) {
     if (signal.aborted) return;
-    $("audio-note").textContent = e.message + " Using a browser voice.";
+    $("audio-note").textContent = (e as Error).message + " Using a browser voice.";
     return localSpeak(spoken, voice, signal);
   }
   for (let i = 0; i < parts.length && !signal.aborted; i++) {
@@ -838,11 +945,11 @@ async function speak(text, voice, signal) {
     await playAudio(audio, signal);
   }
 }
-async function playAudio(blob, signal) {
+async function playAudio(blob: Blob, signal: AbortSignal) {
   const url = URL.createObjectURL(blob);
   const audio = new Audio(url);
   try {
-    await new Promise((resolve, reject) => {
+    await new Promise<void>((resolve, reject) => {
       const cleanup = () => signal.removeEventListener("abort", stop);
       const stop = () => {
         audio.pause();
@@ -872,19 +979,19 @@ async function playAudio(blob, signal) {
   }
 }
 /** A just-cancelled turn can take a moment to release the model, so retry while busy. */
-async function requestTurn(data, signal) {
+async function requestTurn(data: unknown, signal: AbortSignal) {
   for (let attempt = 0; ; attempt++) {
     try {
-      return await request("/api/turn", "POST", data, signal);
+      return await request<TurnResult>("/api/turn", "POST", data, signal);
     } catch (e) {
-      if (e.status !== 409 || attempt >= 10) throw e;
+      if ((e as RequestError).status !== 409 || attempt >= 10) throw e;
       await new Promise((resolve) => setTimeout(resolve, 500));
     }
   }
 }
 /** Run the discussion in rotation, or only the agents the host just tagged.
- * @param {string[]} [asked] ids of tagged agents, in order */
-async function run(asked) {
+ * `asked` holds the ids of tagged agents, in order. */
+async function run(asked?: string[]) {
   if (!current || running || recording || current.status === "accepted") return;
   stopPlayback();
   const m = current,
@@ -901,7 +1008,7 @@ async function run(asked) {
     : Math.min(60, Math.max(1, Math.floor(Number($("limit").value) || 12)));
   let turns = 0,
     // Agents in a row with nothing new to say.
-    quiet = [];
+    quiet: string[] = [];
   const stalled = () => !queue && quiet.length >= m.participants.length;
   try {
     while (token === revision && canContinue(m, turns, limit) && !stalled()) {
@@ -928,7 +1035,7 @@ async function run(asked) {
         signal = AbortSignal.any([ctrl.signal, turn.signal]);
       speaker = { id: agent.id, turn };
       clearSpeaker();
-      [...$("team").children]
+      [...($("team").children as HTMLCollectionOf<HTMLElement>)]
         .find((el) => el.dataset.agent === agent.id)
         ?.classList.add("active");
       const context = {
@@ -968,14 +1075,14 @@ async function run(asked) {
         try {
           await speak(result.text, agent.voice, signal);
         } catch (e) {
-          if (!signal.aborted) $("audio-note").textContent = e.message;
+          if (!signal.aborted) $("audio-note").textContent = (e as Error).message;
         }
       }
       if (agent.provider === "demo")
         await new Promise((resolve) => setTimeout(resolve, 600));
     }
   } catch (e) {
-    if (token === revision && !ctrl.signal.aborted) error(e.message);
+    if (token === revision && !ctrl.signal.aborted) error((e as Error).message);
   } finally {
     if (token === revision) {
       running = null;
@@ -1003,17 +1110,17 @@ $("agent-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   error();
   $("create-status").textContent = "";
-  const f = e.currentTarget,
+  const f = e.currentTarget as Elements["agent-form"],
     data = new FormData(f);
   try {
     const skills = [...pendingSkills];
-    for (const file of f.elements.skills.files) {
+    for (const file of f.elements.skills.files!) {
       if (file.size > MAX_SKILL_CHARS)
         throw new Error("Skill files must be under 32 KB.");
       skills.push({ name: file.name, text: await file.text() });
     }
     if (String(data.get("skillText")).trim())
-      skills.push({ name: "Custom skill", text: data.get("skillText") });
+      skills.push({ name: "Custom skill", text: data.get("skillText") as string });
     if (skills.length > MAX_SKILLS)
       throw new Error("An agent can have at most " + MAX_SKILLS + " skills.");
     const agent = normalizeAgent({
@@ -1036,18 +1143,19 @@ $("agent-form").addEventListener("submit", async (e) => {
     await save();
   } catch (e) {
     // The toast sits behind an open dialog, so say it inside.
-    $("create-status").textContent = e.message;
+    $("create-status").textContent = (e as Error).message;
   }
 });
 $("agent-form").elements.provider.addEventListener("change", (e) => {
   // A model name from another provider is never carried over.
   $("agent-form").elements.model.value = "";
-  $("agent-form").elements.model.disabled = e.target.value === "demo";
+  $("agent-form").elements.model.disabled =
+    (e.target as HTMLSelectElement).value === "demo";
 });
 $("meeting-form").addEventListener("submit", (e) => {
   e.preventDefault();
   error();
-  const f = e.currentTarget,
+  const f = e.currentTarget as HTMLFormElement,
     d = new FormData(f),
     ids = d.getAll("agent");
   if (!ids.length) {
@@ -1061,7 +1169,7 @@ $("meeting-form").addEventListener("submit", (e) => {
     error("Choose at most 12 participants.");
     return;
   }
-  const m = {
+  const m: Meeting = {
     id: crypto.randomUUID(),
     goal: String(d.get("goal")).trim(),
     description: String(d.get("description")).trim(),
@@ -1089,7 +1197,7 @@ $("meeting-form").addEventListener("submit", (e) => {
 $("message-form").addEventListener("submit", (e) => {
   e.preventDefault();
   if (!current || recording || current.status === "accepted") return;
-  const input = e.currentTarget.elements.message,
+  const input = (e.currentTarget as Elements["message-form"]).elements.message,
     text = input.value.trim();
   if (!text) return;
   mentions.close();
@@ -1120,7 +1228,7 @@ $("record").addEventListener("click", async () => {
   pause();
   error();
   const m = current;
-  let stream;
+  let stream: MediaStream | undefined;
   try {
     stream = await navigator.mediaDevices.getUserMedia({
       audio: { echoCancellation: true, noiseSuppression: true },
@@ -1131,12 +1239,12 @@ $("record").addEventListener("click", async () => {
     }
     const rec = new MediaRecorder(stream);
     recording = rec;
-    const chunks = [];
+    const chunks: Blob[] = [];
     rec.ondataavailable = (e) => {
       if (e.data.size) chunks.push(e.data);
     };
     rec.onerror = () => {
-      stream.getTracks().forEach((t) => t.stop());
+      stream!.getTracks().forEach((t) => t.stop());
       recording = null;
       $("record-label").textContent =
         current?.mode === "voice" ? "Turn mic on" : "Record voice";
@@ -1148,7 +1256,7 @@ $("record").addEventListener("click", async () => {
     }, 60000);
     rec.onstop = async () => {
       clearTimeout(timer);
-      stream.getTracks().forEach((t) => t.stop());
+      stream!.getTracks().forEach((t) => t.stop());
       $("record-label").textContent = "Transcribing…";
       $("record").disabled = true;
       try {
@@ -1158,11 +1266,11 @@ $("record").addEventListener("click", async () => {
           headers: { "content-type": blob.type },
           body: blob,
         });
-        const data = await res.json();
+        const data = (await res.json()) as { text: string; error?: string };
         if (!res.ok) throw new Error(data.error);
         if (current === m) $("message-form").elements.message.value = data.text;
       } catch (e) {
-        error(e.message);
+        error((e as Error).message);
       } finally {
         recording = null;
         $("record-label").textContent =
@@ -1177,19 +1285,19 @@ $("record").addEventListener("click", async () => {
     stream?.getTracks().forEach((t) => t.stop());
     recording = null;
     renderStatus();
-    error(e.message);
+    error((e as Error).message);
   }
 });
 async function init() {
   try {
     [state, config] = await Promise.all([
-      request("/api/state"),
-      request("/api/config"),
+      request<State>("/api/state"),
+      request<Config>("/api/config"),
     ]);
     stateVersion = state._revision ?? 0;
     renderConnection();
     // Checking the CLI takes a moment, so the page does not wait for it.
-    void request("/api/claude")
+    void request<ClaudeStatus>("/api/claude")
       .then(renderConnection)
       .catch(() => {});
     resetAgentModel();
@@ -1224,12 +1332,12 @@ async function init() {
     if (window.speechSynthesis) window.speechSynthesis.getVoices();
   } catch (e) {
     $("connection").replaceChildren(chip("Disconnected", "danger"));
-    error(e.message);
+    error((e as Error).message);
   }
 }
 /** A fresh form: the connected provider, with the model left to automatic. */
 /** Skills imported for the agent that is still being created. */
-let pendingSkills = [];
+let pendingSkills: Skill[] = [];
 function renderPendingSkills() {
   $("new-agent-skills").replaceChildren(
     ...pendingSkills.map((skill) => {
@@ -1249,15 +1357,15 @@ function renderPendingSkills() {
   );
 }
 /** Add skills, replacing ones with the same name so a re-import updates them. */
-function mergeSkills(existing, added) {
-  const merged = new Map(existing.map((s) => [s.name, s]));
+function mergeSkills(existing: Skill[], added: Skill[]) {
+  const merged = new Map<string, Skill>(existing.map((s) => [s.name, s]));
   for (const { name, text, source } of added)
     merged.set(name, { name, text, source });
   if (merged.size > MAX_SKILLS)
     throw new Error("An agent can have at most " + MAX_SKILLS + " skills.");
   return [...merged.values()];
 }
-async function addImportedSkills(target, skills) {
+async function addImportedSkills(target: string, skills: Skill[]) {
   const agent = state.agents.find((a) => a.id === target);
   if (!agent) {
     pendingSkills = mergeSkills(pendingSkills, skills);
@@ -1270,7 +1378,7 @@ async function addImportedSkills(target, skills) {
   return agent.name;
 }
 /** Turn imported profiles into agents. Importing one again updates it in place. */
-async function addImportedAgents(profiles, provider) {
+async function addImportedAgents(profiles: ImportedProfile[], provider: string) {
   let added = 0,
     updated = 0;
   for (const profile of profiles) {
@@ -1283,7 +1391,7 @@ async function addImportedAgents(profiles, provider) {
     // A profile's Claude model is kept only when the agent runs on Claude.
     const claudeModel =
       provider === "claude" && /^(sonnet|opus|haiku|claude-)/.test(profile.model);
-    const agent = {
+    const agent: Agent = {
       ...normalizeAgent({
         id: existing?.id ?? crypto.randomUUID(),
         name,
@@ -1326,7 +1434,7 @@ $("import-agents").addEventListener("click", () =>
 );
 $("detail-import").addEventListener("click", () => {
   $("agent-dialog").close();
-  openImport(viewedAgentId, "library");
+  openImport(viewedAgentId!, "library");
 });
 function resetAgentModel() {
   const { provider, model } = $("agent-form").elements;
@@ -1336,9 +1444,9 @@ function resetAgentModel() {
 }
 /** Start new agents on a provider that is connected. */
 async function chooseDefaults() {
-  const result = await request("/api/models").catch(() => null);
+  const result = await request<ModelSettings>("/api/models").catch(() => null);
   if (!result) return;
-  const connected = (cli) => config.cli && cli?.authenticated;
+  const connected = (cli?: CliStatus) => config.cli && cli?.authenticated;
   preferredProvider = connected(result.claude)
     ? "claude"
     : connected(result.codex)
@@ -1349,7 +1457,7 @@ async function chooseDefaults() {
   // Leave the form alone if someone has started filling it in.
   if (!$("create-agent").open) resetAgentModel();
 }
-function renderConnection(claude) {
+function renderConnection(claude?: ClaudeStatus) {
   const chips = [
     chip("Local workspace", "success"),
     chip(
@@ -1373,12 +1481,11 @@ function renderConnection(claude) {
   $("connection").replaceChildren(...chips);
 }
 $("voice-output").addEventListener("change", (e) => {
-  if (running && e.target.checked) stopPlayback();
+  if (running && (e.target as HTMLInputElement).checked) stopPlayback();
 });
 $("dismiss").addEventListener("click", () => error());
-/** Dark unless this browser has chosen light. The button names the mode it switches to.
- * @param {'light' | 'dark'} theme */
-function setTheme(theme) {
+/** Dark unless this browser has chosen light. The button names the mode it switches to. */
+function setTheme(theme: "light" | "dark") {
   document.documentElement.dataset.theme = theme;
   $("theme-label").textContent =
     theme === "dark" ? "Light mode" : "Dark mode";
@@ -1400,15 +1507,12 @@ $("theme").addEventListener("click", () => {
 });
 void init();
 
-/** @type {string | null} */
-let viewedAgentId = null;
-/** @type {ReturnType<typeof setTimeout> | undefined} */
-let modelPoll;
+let viewedAgentId: string | null = null;
+let modelPoll: ReturnType<typeof setTimeout> | undefined;
 let settingsLoading = false;
 
-/** @param {'meetings' | 'agents' | 'settings'} view */
-function showView(view) {
-  const workspace = document.querySelector(".workspace");
+function showView(view: View) {
+  const workspace = document.querySelector(".workspace")!;
   workspace.classList.toggle("settings-open", view === "settings");
   workspace.classList.toggle("agents-open", view === "agents");
   $("settings-panel").hidden = view !== "settings";
@@ -1452,12 +1556,11 @@ function renderAgentDirectory() {
         : empty("No agents yet", "Create one to assemble your team."),
     );
 }
-/** @param {{id:string,name:string,provider:string,model:string,voice:string,instructions:string,skills:Array<{name:string,text:string}>}} agent */
-function viewAgent(agent) {
+function viewAgent(agent: Agent) {
   viewedAgentId = agent.id;
   $("agent-detail-name").textContent = agent.name;
   $("agent-detail").replaceChildren();
-  const detail = (title, text) =>
+  const detail = (title: string, text: string) =>
     $("agent-detail").append(node("h3", title), node("p", text));
   detail("MODEL", modelLabel(agent));
   detail("INSTRUCTIONS", agent.instructions || "No instructions.");
@@ -1518,7 +1621,7 @@ $("add-agent").addEventListener("click", () => {
   $("agent-form").elements.name.focus();
 });
 $("create-close").addEventListener("click", () => $("create-agent").close());
-for (const view of ["meetings", "agents", "settings"])
+for (const view of ["meetings", "agents", "settings"] as const)
   $("nav-" + view).addEventListener("click", () => showView(view));
 
 async function refreshModels() {
@@ -1527,9 +1630,9 @@ async function refreshModels() {
   $("refresh-models").disabled = true;
   clearTimeout(modelPoll);
   try {
-    const result = await request("/api/models");
+    const result = await request<ModelSettings>("/api/models");
     $("provider-status").replaceChildren();
-    const card = (title, label, ready, description) => {
+    const card = (title: string, label: string, ready: boolean, description: string) => {
       const el = node("div", undefined, "card provider");
       el.append(
         node("h3", title, "card__title"),
@@ -1555,7 +1658,7 @@ async function refreshModels() {
     for (const [key, title] of [
       ["codex", "ChatGPT / Codex CLI"],
       ["claude", "Claude Code CLI"],
-    ]) {
+    ] as const) {
       const cli = result[key];
       const ready = cli.installed && cli.authenticated && cli.enabled;
       card(
@@ -1577,7 +1680,7 @@ async function refreshModels() {
       for (const [key, title] of [
         ["codex", "Mac · Codex"],
         ["claude", "Mac · Claude Code"],
-      ]) {
+      ] as const) {
         const host = result.hostAccess[key];
         card(
           title,
@@ -1611,7 +1714,7 @@ async function refreshModels() {
         node("p", "No models found. Download your first model below.", "muted"),
       );
     const job = result.pull;
-    $("install-model-form").querySelector("button").disabled =
+    $("install-model-form").querySelector("button")!.disabled =
       !result.ollama.available || job?.status === "downloading";
     $("download-progress").textContent = job
       ? job.name +
@@ -1625,7 +1728,7 @@ async function refreshModels() {
     if (job?.status === "downloading" && !$("settings-panel").hidden)
       modelPoll = setTimeout(() => void refreshModels(), 1500);
   } catch (e) {
-    error(e.message);
+    error((e as Error).message);
   } finally {
     settingsLoading = false;
     $("refresh-models").disabled = false;
@@ -1635,15 +1738,15 @@ $("refresh-models").addEventListener("click", () => void refreshModels());
 $("install-model-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   error();
-  const button = e.currentTarget.querySelector("button");
+  const button = (e.currentTarget as HTMLFormElement).querySelector("button")!;
   button.disabled = true;
   try {
     await request("/api/models/pull", "POST", {
-      name: e.currentTarget.elements.model.value.trim(),
+      name: (e.currentTarget as Elements["install-model-form"]).elements.model.value.trim(),
     });
     await refreshModels();
   } catch (e) {
-    error(e.message);
+    error((e as Error).message);
     button.disabled = false;
   }
 });
@@ -1657,12 +1760,16 @@ $("starter-team").addEventListener("click", async () => {
         "Pause the meeting and finish recording before adding the starter team.",
       );
     await saveQueue;
-    const result = await request("/api/agents/starter-team", "POST", {});
+    const result = await request<{ state: State; added: number }>(
+      "/api/agents/starter-team",
+      "POST",
+      {},
+    );
     state = result.state;
     stateVersion = state._revision ?? 0;
     if (current)
       current =
-        state.meetings.find((meeting) => meeting.id === current.id) ?? null;
+        state.meetings.find((meeting) => meeting.id === current!.id) ?? null;
     assignVoices(state.agents);
     renderAgents();
     // The history list and the open room must point at the new meeting objects.
@@ -1678,7 +1785,7 @@ $("starter-team").addEventListener("click", async () => {
       (result.added === 1 ? " agent" : " agents") +
       " added. Models are chosen automatically from your installed Ollama models.";
   } catch (err) {
-    error(err.message);
+    error((err as Error).message);
   } finally {
     $("starter-team").disabled = false;
   }
@@ -1704,7 +1811,7 @@ function renderMode() {
   if (!recording)
     $("record-label").textContent = voice ? "Turn mic on" : "Record voice";
 }
-for (const mode of ["chat", "voice"])
+for (const mode of ["chat", "voice"] as const)
   $("mode-" + mode).addEventListener("click", () => {
     if (!current) return;
     if (recording) {

@@ -7,22 +7,25 @@
     "node": ">=24"
   },
   "scripts": {
-    "start": "node src/server.js",
-    "start:cli": "QUORUM_ENABLE_CLI=1 node src/server.js",
-    "start:local": "PORT=4711 QUORUM_ENABLE_CLI=1 QUORUM_HOST_ACCESS=/dev/null OLLAMA_URL=http://127.0.0.1:11435 QUORUM_OPENAI_URL=http://127.0.0.1:8081/v1 WHISPER_URL=http://127.0.0.1:8001/v1 KOKORO_URL=http://127.0.0.1:8880/v1 node src/server.js",
-    "services": "node scripts/services.js",
-    "dev": "node --watch src/server.js",
+    "start": "node src/server.ts",
+    "start:cli": "QUORUM_ENABLE_CLI=1 node src/server.ts",
+    "start:local": "PORT=4711 QUORUM_ENABLE_CLI=1 QUORUM_HOST_ACCESS=/dev/null OLLAMA_URL=http://127.0.0.1:11435 QUORUM_OPENAI_URL=http://127.0.0.1:8081/v1 WHISPER_URL=http://127.0.0.1:8001/v1 KOKORO_URL=http://127.0.0.1:8880/v1 node src/server.ts",
+    "services": "node scripts/services.ts",
+    "dev": "node --watch src/server.ts",
     "test": "node --test",
-    "check": "node --check src/server.js && node --check src/providers.js && node --check src/engine.js && node --check src/speech.js && node --check public/app.js && node --check src/models.js && node --check src/agent-templates.js && node --check scripts/cli-bridge.js && node --check scripts/check-models.js && node --check src/turn.js && node --check public/mentions.js && node --check src/import.js && node --check public/import.js && node --check scripts/services.js",
+    "check": "npm run typecheck",
     "lint": "oxlint --deny-warnings",
     "lint:py": "uvx ruff@0.17.4 check docker && uvx ruff@0.17.4 format --check docker",
-    "check:host": "node scripts/check-host.js",
-    "check:models": "node scripts/check-models.js",
-    "smoke": "node scripts/smoke.js",
-    "bridge:setup": "node scripts/setup-cli-bridge.js",
-    "bridge": "node scripts/cli-bridge.js"
+    "check:host": "node scripts/check-host.ts",
+    "check:models": "node scripts/check-models.ts",
+    "smoke": "node scripts/smoke.ts",
+    "bridge:setup": "node scripts/setup-cli-bridge.ts",
+    "bridge": "node scripts/cli-bridge.ts",
+    "typecheck": "tsc -p tsconfig.json && tsc -p public/tsconfig.json"
   },
   "devDependencies": {
-    "oxlint": "1.93.0"
+    "@types/node": "24.19.3",
+    "oxlint": "1.93.0",
+    "typescript": "7.0.2"
   }
 }
