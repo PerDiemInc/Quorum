@@ -1,8 +1,9 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
     <title>Quorum — Different minds. One orbit.</title>
     <meta
       name="description"
@@ -12,9 +13,15 @@
     <script type="module" src="/app.js"></script>
   </head>
   <body>
-    <header>
+    <a class="skip" href="#workspace">Skip to workspace</a>
+    <header class="navbar">
       <div class="brand">
-        <span class="mark">Q</span>
+        <span class="mark" aria-hidden="true"
+          ><svg viewBox="0 0 24 24">
+            <circle cx="12" cy="6" r="3" />
+            <circle cx="6" cy="16.5" r="3" />
+            <circle cx="18" cy="16.5" r="3" /></svg
+        ></span>
         <div>
           <strong>Quorum</strong><small>Different minds. One goal.</small>
         </div>
@@ -24,10 +31,21 @@
           Meeting room</button
         ><button id="nav-agents" class="nav-button" type="button">Agents</button
         ><button id="nav-settings" class="nav-button" type="button">
-          Settings <span aria-hidden="true">↗</span>
+          Settings
         </button>
       </nav>
-      <span id="connection" class="muted">Connecting…</span>
+      <div class="navbar-end">
+        <div id="connection" class="chips" role="status">
+          <span class="chip">Connecting…</span>
+        </div>
+        <button id="theme" type="button" class="secondary">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="12" cy="12" r="8.5" />
+            <path d="M12 3.5v17a8.5 8.5 0 0 0 0-17Z" class="fill" />
+          </svg>
+          <span id="theme-label">Light mode</span>
+        </button>
+      </div>
     </header>
     <div class="intro">
       <div>
@@ -86,8 +104,8 @@
                 >Model<input name="model" placeholder="e.g. qwen3:8b"
               /></label>
               <label
-                >Voice<input name="voice" placeholder="e.g. af_heart"
-              /></label>
+                >Voice<select name="voice"></select
+              ></label>
               <label
                 >Skill files (SKILL.md)<input
                   name="skills"
@@ -112,7 +130,7 @@
           <div id="history"></div>
         </section>
       </aside>
-      <div class="workspace">
+      <div class="workspace" id="workspace" tabindex="-1">
         <section class="panel" id="new-panel">
           <div class="heading">
             <h1>Start a meeting</h1>
@@ -207,33 +225,48 @@
                 value="12"
                 min="1"
                 max="60" /></label
-            ><label class="check"
-              ><input id="voice-output" type="checkbox" /> Speak replies</label
+            ><label class="switch"
+              ><input id="voice-output" type="checkbox" role="switch" /> Speak
+              replies</label
             >
             <button id="resume">Start / continue</button
             ><button id="pause" class="secondary">Pause</button
             ><button id="accept" class="secondary">Accept outcome</button
             ><button id="new" class="secondary">New meeting</button>
           </div>
-          <p id="progress" class="muted" aria-live="polite"></p>
-          <p id="audio-note" class="muted" aria-live="polite"></p>
-          <div id="transcript" role="log" aria-live="polite"></div>
+          <div
+            id="transcript"
+            role="log"
+            aria-live="polite"
+            aria-label="Meeting transcript"
+            tabindex="0"
+          ></div>
+          <div class="activity">
+            <span class="spinner" aria-hidden="true"></span>
+            <p id="progress" class="muted" aria-live="polite"></p>
+          </div>
           <form id="message-form">
-            <label
-              >Join the conversation<textarea
+            <label for="message">Join the conversation</label>
+            <div class="composer">
+              <textarea
+                id="message"
                 name="message"
                 maxlength="16000"
-                rows="3"
+                rows="2"
                 placeholder="Ask a question, challenge an idea, or give feedback"
               ></textarea>
-            </label>
-            <div class="controls">
-              <button type="submit">Send feedback</button
-              ><button id="record" type="button" class="secondary">
-                Record voice
-              </button>
+              <div class="controls">
+                <button id="record" type="button" class="secondary">
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <rect x="9" y="3.5" width="6" height="11" rx="3" />
+                    <path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3" /></svg
+                  ><span id="record-label">Record voice</span>
+                </button>
+                <button type="submit">Send feedback</button>
+              </div>
             </div>
           </form>
+          <p id="audio-note" class="muted small" aria-live="polite"></p>
           <p class="muted small">
             Recording pauses discussion. Review the Whisper transcription, then
             send it as feedback. Continue when ready.
@@ -269,9 +302,10 @@
             </button>
           </div>
           <p class="notice">
-            Docker has its own environment. The optional authenticated Mac CLI
-            bridge connects to your existing Claude Code and Codex logins. These
-            CLIs normally use cloud inference; Ollama runs the model locally.
+            Claude Code and Codex use your existing logins: directly when Quorum
+            runs on this Mac, or through the optional Mac CLI bridge when it runs
+            in Docker. These CLIs normally use cloud inference; Ollama runs the
+            model locally.
           </p>
           <div id="provider-status" class="provider-grid"></div>
           <h2>Installed models</h2>
@@ -297,7 +331,6 @@
           </form>
           <p id="download-progress" role="status" aria-live="polite"></p>
         </section>
-        <p id="error" role="alert" class="error"></p>
       </div>
     </main>
     <dialog id="agent-dialog" aria-labelledby="agent-detail-name">
@@ -323,6 +356,19 @@
         Existing meetings retain their own copy of this agent.
       </p>
     </dialog>
+    <div id="alert" role="alert">
+      <p id="error"></p>
+      <button
+        id="dismiss"
+        type="button"
+        class="icon-button"
+        aria-label="Dismiss message"
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="m7 7 10 10M17 7 7 17" />
+        </svg>
+      </button>
+    </div>
     <footer>
       Local-first • Model providers may send meeting context to their own
       services • Only the host can accept the outcome.

@@ -3,6 +3,12 @@ import {
   nextParticipant,
   canContinue,
   normalizeAgent,
+  defaultModels,
+  voices,
+  hostVoice,
+  assignVoices,
+  speakable,
+  speechChunks,
 } from "/engine.js";
 
 const $ = (id) => document.getElementById(id);
@@ -13,14 +19,10 @@ const names = {
   claude: "Claude Code CLI",
   codex: "ChatGPT / Codex CLI",
 };
-const defaults = {
-  demo: "",
-  ollama: "qwen2.5:0.5b",
-  "openai-compatible": "",
-  // Sonnet tracks Claude's latest everyday model. Sol balances response speed and quality.
-  claude: "sonnet",
-  codex: "gpt-6.2-sol",
-};
+// Local entries are replaced with an installed model once the server reports them.
+const defaults = { ...defaultModels };
+// The provider new agents start on; chosen from what is actually connected.
+let preferredProvider = "demo";
 let state = { agents: [], meetings: [] },
   config = {},
   current = null,
@@ -76,6 +78,75 @@ function button(text, fn) {
   b.addEventListener("click", fn);
   return b;
 }
+/** Initials on a color that stays the same for a given name. */
+function avatar(name) {
+  const tone = [...name].reduce((sum, c) => sum + c.charCodeAt(0), 0) % 6;
+  const el = node(
+    "span",
+    name
+      .split(/\s+/)
+      .slice(0, 2)
+      .map((word) => word[0] ?? "")
+      .join(""),
+    "avatar tone-" + tone,
+  );
+  el.setAttribute("aria-hidden", "true");
+  return el;
+}
+function chip(text, tone) {
+  const el = node("span", text, "chip");
+  if (tone) el.dataset.tone = tone;
+  return el;
+}
+function empty(title, text) {
+  const el = node("div", undefined, "empty");
+  el.append(node("strong", title), node("span", text));
+  return el;
+}
+function agentInfo(agent, detail) {
+  const el = node("div", undefined, "agent-info");
+  el.append(node("strong", agent.name), node("small", detail));
+  return el;
+}
+function icon(path) {
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("aria-hidden", "true");
+  const shape = document.createElementNS(ns, "path");
+  shape.setAttribute("d", path);
+  shape.setAttribute("class", "fill");
+  svg.append(shape);
+  return svg;
+}
+const model = (agent) =>
+  names[agent.provider] + (agent.model ? " · " + agent.model : "");
+
+const voiceName = (id) =>
+  voices.find(([voice]) => voice === id)?.[1] ?? id;
+/** Fill a voice list. Voices other agents hold are labeled, or disabled when asked. */
+function voiceOptions(select, selected, others, { lockUsed = false } = {}) {
+  const ids = voices.map(([id]) => id);
+  if (selected && !ids.includes(selected)) ids.push(selected);
+  const options = ids.map((id) => {
+    const owner = others.find((a) => a.voice === id),
+      option = node(
+        "option",
+        voiceName(id) + (owner ? " (" + owner.name + ")" : ""),
+      );
+    option.value = id;
+    option.disabled = lockUsed && Boolean(owner);
+    return option;
+  });
+  if (!selected) {
+    const automatic = node("option", "Automatic (unique)");
+    automatic.value = "";
+    options.unshift(automatic);
+  }
+  select.replaceChildren(...options);
+  select.value = selected;
+}
+
 function modelOptions(select, selected) {
   select.replaceChildren(
     ...providers.map((p) => {
@@ -97,21 +168,13 @@ function renderAgents() {
   list.replaceChildren();
   invite.replaceChildren();
   for (const a of state.agents) {
-    const card = node("div", undefined, "agent");
-    card.append(
-      node("strong", a.name),
-      node(
-        "div",
-        names[a.provider] + (a.model ? " · " + a.model : ""),
-        "muted small",
-      ),
-      node(
-        "div",
-        a.skills.map((s) => s.name).join(", ") || "No skills",
-        "small",
-      ),
+    const card = node("div", undefined, "agent"),
+      info = agentInfo(a, model(a));
+    info.append(
+      node("small", a.skills.map((s) => s.name).join(", ") || "No skills"),
+      button("View agent", () => viewAgent(a)),
     );
-    card.append(button("View agent ↗", () => viewAgent(a)));
+    card.append(avatar(a.name), info);
     list.append(card);
     const label = node("label", undefined, "check"),
       input = node("input");
@@ -119,15 +182,18 @@ function renderAgents() {
     input.name = "agent";
     input.value = a.id;
     input.checked = picked.has(a.id);
-    label.append(input, node("span", a.name));
+    label.append(input, avatar(a.name), agentInfo(a, model(a)));
     invite.append(label);
   }
   $("agent-count").textContent = String(state.agents.length);
   renderAgentDirectory();
+  voiceOptions($("agent-form").elements.voice, "", state.agents, {
+    lockUsed: true,
+  });
   updateInviteSelection();
   if (!state.agents.length) {
-    list.append(node("p", "Create your first agent.", "muted"));
-    invite.append(node("p", "No agents available.", "muted"));
+    list.append(empty("No agents yet", "Create your first agent."));
+    invite.append(empty("No agents available", "Create one to invite it."));
   }
 }
 function renderHistory() {
@@ -140,18 +206,16 @@ function renderHistory() {
   list.replaceChildren();
   if (!state.meetings.length)
     list.append(
-      node(
-        "p",
-        "A clean slate. Your conversations will land here.",
-        "empty-history",
-      ),
+      empty("A clean slate", "Your conversations will land here."),
     );
   else if (!meetings.length)
-    list.append(node("p", "No meetings match your search.", "empty-history"));
+    list.append(empty("No matches", "No meetings match your search."));
   for (const m of meetings.toReversed()) {
     const item = node("div", undefined, "history-item");
+    const open = button(m.goal, () => openMeeting(m));
+    if (m === current) open.setAttribute("aria-current", "true");
     item.append(
-      button(m.goal, () => openMeeting(m)),
+      open,
       node("p", [m.status, m.createdAt && new Date(m.createdAt).toLocaleDateString(), m.participants.map((agent) => agent.name).join(", ")].filter(Boolean).join(" · "), "muted small"),
     );
     list.append(item);
@@ -181,7 +245,7 @@ function renderTeam() {
     const card = node("div", undefined, "participant");
     card.dataset.agent = a.id;
     card.append(
-      node("span", a.name.slice(0, 2).toUpperCase(), "avatar"),
+      avatar(a.name),
       node("strong", a.name),
       node(
         "small",
@@ -203,10 +267,29 @@ function renderTeam() {
       void save();
     });
     model.addEventListener("change", () => {
-      a.model = model.value.trim();
+      a.model = model.value.trim() || defaults[a.provider];
+      model.value = a.model;
       void save();
     });
-    card.append(select, model);
+    const voice = node("select");
+    voice.setAttribute("aria-label", a.name + " voice");
+    voiceOptions(
+      voice,
+      a.voice,
+      current.participants.filter((p) => p !== a),
+    );
+    voice.addEventListener("change", () => {
+      // Picking a voice someone else has swaps the two, so each stays unique.
+      const other = current.participants.find(
+        (p) => p !== a && p.voice === voice.value,
+      );
+      if (other) other.voice = a.voice;
+      a.voice = voice.value;
+      stopPlayback();
+      renderTeam();
+      void save();
+    });
+    card.append(select, model, voice);
     $("team").append(card);
   }
 }
@@ -214,19 +297,103 @@ function renderTranscript() {
   $("transcript").replaceChildren();
   if (!current) return;
   for (const m of current.transcript) {
-    const row = node("article", undefined, "message");
-    row.append(
-      node("span", m.speaker, "speaker"),
-      node("span", m.model ? " · " + m.model : "", "muted small"),
-      node("p", m.text),
-    );
+    const host = m.speaker === "Host",
+      row = node("article", undefined, host ? "message host" : "message"),
+      content = node("div", undefined, "message-body"),
+      meta = node("div", undefined, "meta"),
+      line = node("div", undefined, "bubble-line"),
+      listen = node("button", undefined, "play");
+    meta.append(node("strong", m.speaker));
+    if (m.model) meta.append(node("span", m.model));
+    if (m.at)
+      meta.append(
+        node(
+          "time",
+          new Date(m.at).toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit",
+          }),
+        ),
+      );
+    listen.type = "button";
+    listen.message = m;
+    listen.addEventListener("click", () => void play(m));
+    showPlayState(listen);
+    line.append(node("p", m.text, "bubble"), listen);
+    content.append(meta, line);
+    row.append(avatar(m.speaker), content);
     $("transcript").append(row);
   }
+  if (!current.transcript.length)
+    $("transcript").append(
+      empty(
+        "No messages yet",
+        "Start the discussion, or add the first thought yourself.",
+      ),
+    );
   $("transcript").scrollTop = $("transcript").scrollHeight;
+}
+/** The message being read aloud from its play button, if any. */
+let playback = null;
+function showPlayState(el) {
+  const active = playback?.message === el.message;
+  el.classList.toggle("playing", active);
+  el.replaceChildren(
+    icon(active ? "M7 7h10v10H7Z" : "M8 5.5v13l10.5-6.5Z"),
+  );
+  el.title = active ? "Stop reading" : "Read aloud";
+  el.setAttribute(
+    "aria-label",
+    (active ? "Stop reading " : "Read aloud ") +
+      el.message.speaker +
+      "'s message",
+  );
+}
+function updatePlayButtons() {
+  for (const el of $("transcript").querySelectorAll(".play")) showPlayState(el);
+}
+function stopPlayback() {
+  playback?.ctrl.abort();
+  playback = null;
+  updatePlayButtons();
+}
+async function play(message) {
+  if (playback?.message === message) {
+    stopPlayback();
+    return;
+  }
+  if (recording) {
+    error("Finish recording first.");
+    return;
+  }
+  // Two voices at once would be unintelligible, so a spoken discussion pauses first.
+  if (running && $("voice-output").checked) pause();
+  stopPlayback();
+  error();
+  const ctrl = new AbortController();
+  playback = { message, ctrl };
+  updatePlayButtons();
+  const voice =
+    message.speaker === "Host"
+      ? hostVoice
+      : (current.participants.find((a) => a.name === message.speaker)?.voice ??
+        "");
+  try {
+    await speak(message.text, voice, ctrl.signal);
+  } catch (e) {
+    if (!ctrl.signal.aborted) error(e.message);
+  } finally {
+    if (playback?.ctrl === ctrl) {
+      playback = null;
+      updatePlayButtons();
+    }
+  }
 }
 function renderStatus(message = "") {
   if (!current) return;
   $("status").textContent = current.status;
+  $("status").dataset.status = current.status;
+  $("meeting-panel").dataset.busy = String(Boolean(running));
   $("mic-state").textContent = recording
     ? "Microphone on · recording"
     : "Microphone off";
@@ -244,6 +411,7 @@ function clearSpeaker() {
   for (const card of $("team").children) card.classList.remove("active");
 }
 function pause() {
+  stopPlayback();
   revision++;
   if (running) running.abort();
   running = null;
@@ -320,7 +488,12 @@ function localSpeak(text, voice, signal) {
       return;
     }
     const utterance = new SpeechSynthesisUtterance(text);
-    utterance.voice = voices.find((v) => v.name === voice) ?? voices[0];
+    // The first listed voice is often a novelty voice, so prefer the default one.
+    utterance.voice =
+      voices.find((v) => v.name === voice) ??
+      voices.find((v) => v.default) ??
+      voices.find((v) => v.lang === navigator.language) ??
+      voices[0];
     const finish = () => {
       signal.removeEventListener("abort", stop);
       resolve();
@@ -340,15 +513,36 @@ function localSpeak(text, voice, signal) {
   });
 }
 async function speak(text, voice, signal) {
-  if (!config.kokoro) return localSpeak(text, voice, signal);
-  const res = await fetch("/api/speech", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ text, voice }),
-    signal,
-  });
-  if (!res.ok) throw new Error("Kokoro speech request failed");
-  const url = URL.createObjectURL(await res.blob());
+  const spoken = speakable(text);
+  if (!spoken) return;
+  if (!config.kokoro) return localSpeak(spoken, voice, signal);
+  const synthesize = async (part) => {
+    const res = await fetch("/api/speech", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text: part, voice }),
+      signal,
+    });
+    if (!res.ok)
+      throw new Error(
+        "Natural voices are not available. Start them with npm run services.",
+      );
+    return res.blob();
+  };
+  const parts = speechChunks(spoken);
+  let next = synthesize(parts[0]);
+  for (let i = 0; i < parts.length && !signal.aborted; i++) {
+    const audio = await next;
+    // Prepare the following sentences while these ones play.
+    if (i + 1 < parts.length) {
+      next = synthesize(parts[i + 1]);
+      next.catch(() => {});
+    }
+    await playAudio(audio, signal);
+  }
+}
+async function playAudio(blob, signal) {
+  const url = URL.createObjectURL(blob);
   const audio = new Audio(url);
   try {
     await new Promise((resolve, reject) => {
@@ -382,6 +576,7 @@ async function speak(text, voice, signal) {
 }
 async function run() {
   if (!current || running || recording || current.status === "accepted") return;
+  stopPlayback();
   const m = current,
     token = ++revision,
     ctrl = new AbortController();
@@ -477,14 +672,17 @@ $("agent-form").addEventListener("submit", async (e) => {
       id: crypto.randomUUID(),
       name: data.get("name"),
       provider: data.get("provider"),
-      model: data.get("model"),
+      model:
+        String(data.get("model")).trim() || defaults[data.get("provider")],
       voice: data.get("voice"),
       instructions: data.get("instructions"),
       skills,
     });
     state.agents.push(agent);
+    assignVoices(state.agents);
     f.reset();
-    modelOptions(f.elements.provider, "demo");
+    resetAgentModel();
+    $("create-agent").open = false;
     renderAgents();
     await save();
   } catch (e) {
@@ -523,6 +721,7 @@ $("meeting-form").addEventListener("submit", (e) => {
     status: "paused",
     mode: d.get("mode") === "voice" ? "voice" : "chat",
   };
+  assignVoices(m.participants, state.agents);
   if (!m.goal) {
     error("Enter a meeting goal.");
     return;
@@ -582,7 +781,7 @@ $("record").addEventListener("click", async () => {
     rec.onerror = () => {
       stream.getTracks().forEach((t) => t.stop());
       recording = null;
-      $("record").textContent =
+      $("record-label").textContent =
         current?.mode === "voice" ? "Turn mic on" : "Record voice";
       renderStatus();
       error("Microphone recording failed.");
@@ -593,7 +792,7 @@ $("record").addEventListener("click", async () => {
     rec.onstop = async () => {
       clearTimeout(timer);
       stream.getTracks().forEach((t) => t.stop());
-      $("record").textContent = "Transcribing…";
+      $("record-label").textContent = "Transcribing…";
       $("record").disabled = true;
       try {
         const blob = new Blob(chunks, { type: rec.mimeType || "audio/webm" });
@@ -609,13 +808,13 @@ $("record").addEventListener("click", async () => {
         error(e.message);
       } finally {
         recording = null;
-        $("record").textContent =
+        $("record-label").textContent =
           current?.mode === "voice" ? "Turn mic on" : "Record voice";
         renderStatus("Review your transcription and send it.");
       }
     };
     rec.start();
-    $("record").textContent = "Stop & transcribe";
+    $("record-label").textContent = "Stop & transcribe";
     renderStatus("Recording…");
   } catch (e) {
     stream?.getTracks().forEach((t) => t.stop());
@@ -631,10 +830,13 @@ async function init() {
       request("/api/config"),
     ]);
     stateVersion = state._revision ?? 0;
-    $("connection").textContent =
-      "LOCAL WORKSPACE · " +
-      (config.whisper ? "VOICE CONFIGURED" : "CONNECTED");
-    modelOptions($("agent-form").elements.provider, "demo");
+    renderConnection();
+    // Checking the CLI takes a moment, so the page does not wait for it.
+    void request("/api/claude")
+      .then(renderConnection)
+      .catch(() => {});
+    resetAgentModel();
+    void chooseDefaults();
     if (!state.agents.length && !state.initialized) {
       for (const [name, instructions] of [
         ["Architect", "Consider architecture and tradeoffs."],
@@ -651,6 +853,14 @@ async function init() {
         );
       void save();
     }
+    // Agents saved without a model get the default, so the choice is always visible.
+    for (const agent of [
+      ...state.agents,
+      ...state.meetings.flatMap((m) => m.participants),
+    ])
+      agent.model ||= defaults[agent.provider] ?? "";
+    assignVoices(state.agents);
+    for (const m of state.meetings) assignVoices(m.participants, state.agents);
     state.initialized = true;
     void save();
     for (const m of state.meetings)
@@ -658,14 +868,89 @@ async function init() {
     renderAgents();
     renderHistory();
     $("audio-note").textContent = config.kokoro
-      ? "Kokoro configured."
+      ? "Natural voices by Kokoro, running on this computer."
       : "Speech uses available local browser voices unless Kokoro is configured.";
     if (window.speechSynthesis) window.speechSynthesis.getVoices();
   } catch (e) {
-    $("connection").textContent = "Disconnected";
+    $("connection").replaceChildren(chip("Disconnected", "danger"));
     error(e.message);
   }
 }
+function resetAgentModel() {
+  const { provider, model } = $("agent-form").elements;
+  modelOptions(provider, preferredProvider);
+  model.value = defaults[preferredProvider];
+}
+/** Start new agents on a connected provider and an installed model. */
+async function chooseDefaults() {
+  const result = await request("/api/models").catch(() => null);
+  if (!result) return;
+  const installed = result.ollama.models.map((m) => m.name);
+  if (installed.length && !installed.includes(defaults.ollama))
+    defaults.ollama = installed[0];
+  const served = result.inference.models.map((m) => m.id);
+  if (served.length && !served.includes(defaults["openai-compatible"]))
+    defaults["openai-compatible"] = served[0];
+  const connected = (cli) => config.cli && cli?.authenticated;
+  preferredProvider = connected(result.claude)
+    ? "claude"
+    : connected(result.codex)
+      ? "codex"
+      : installed.length
+        ? "ollama"
+        : "demo";
+  // Leave the form alone if someone has started filling it in.
+  if (!$("create-agent").open) resetAgentModel();
+}
+function renderConnection(claude) {
+  const chips = [
+    chip("Local workspace", "success"),
+    chip(
+      config.whisper ? "Voice input on" : "Voice input off",
+      config.whisper ? "success" : "",
+    ),
+  ];
+  if (config.kokoro) chips.push(chip("Natural voices", "success"));
+  if (claude) {
+    const status = chip(
+      claude.ready
+        ? "Claude ready"
+        : claude.disabled
+          ? "Claude disabled"
+          : "Claude unavailable",
+      claude.ready ? "success" : "warning",
+    );
+    status.title = claude.message ?? "";
+    chips.push(status);
+  }
+  $("connection").replaceChildren(...chips);
+}
+$("voice-output").addEventListener("change", (e) => {
+  if (running && e.target.checked) stopPlayback();
+});
+$("dismiss").addEventListener("click", () => error());
+/** Dark unless this browser has chosen light. The button names the mode it switches to.
+ * @param {'light' | 'dark'} theme */
+function setTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+  $("theme-label").textContent =
+    theme === "dark" ? "Light mode" : "Dark mode";
+}
+try {
+  setTheme(localStorage.getItem("quorum-theme") === "light" ? "light" : "dark");
+} catch {
+  setTheme("dark");
+}
+$("theme").addEventListener("click", () => {
+  const theme =
+    document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+  setTheme(theme);
+  try {
+    localStorage.setItem("quorum-theme", theme);
+  } catch {
+    /* The choice then lasts until the page is reloaded. */
+  }
+});
 void init();
 
 /** @type {string | null} */
@@ -721,7 +1006,7 @@ function viewAgent(agent) {
     names[agent.provider] + (agent.model ? " / " + agent.model : ""),
   );
   detail("INSTRUCTIONS", agent.instructions || "No instructions.");
-  detail("VOICE", agent.voice || "Default local voice");
+  detail("VOICE", agent.voice ? voiceName(agent.voice) : "Default local voice");
   for (const skill of agent.skills) detail(skill.name, skill.text);
   $("agent-dialog").showModal();
 }
@@ -747,6 +1032,7 @@ $("undo-delete").addEventListener("click", async () => {
   const agent = state.deletedAgents?.pop();
   if (!agent) return;
   state.agents.push(agent);
+  assignVoices(state.agents);
   renderAgents();
   await save();
 });
@@ -894,7 +1180,9 @@ $("starter-team").addEventListener("click", async () => {
     if (current)
       current =
         state.meetings.find((meeting) => meeting.id === current.id) ?? null;
+    assignVoices(state.agents);
     renderAgents();
+    await save();
     $("starter-team-status").textContent =
       result.added +
       " roles added. These use qwen2.5:3b; install it in Settings if needed.";
@@ -922,7 +1210,7 @@ function renderMode() {
       : "Voice capture unavailable. Enable the speech service in Settings setup; text chat remains available."
     : "Text chat · voice notes are available when speech is configured.";
   if (!recording)
-    $("record").textContent = voice ? "Turn mic on" : "Record voice";
+    $("record-label").textContent = voice ? "Turn mic on" : "Record voice";
 }
 for (const mode of ["chat", "voice"])
   $("mode-" + mode).addEventListener("click", () => {

@@ -7,7 +7,7 @@ import { DatabaseSync } from "node:sqlite";
 import { normalizeAgent, makePrompt } from "./engine.js";
 import { respond } from "./providers.js";
 import { transcribe, synthesize } from "./speech.js";
-import { modelSettings, installModel } from "./models.js";
+import { modelSettings, installModel, claudeStatus } from "./models.js";
 import { addStarterAgents } from "./agent-templates.js";
 
 const port = Number(process.env.PORT ?? 4710);
@@ -144,6 +144,8 @@ const server = createServer(async (req, res) => {
           process.env.QUORUM_ENABLE_CLI === "1" ||
           Boolean(process.env.QUORUM_CLI_BRIDGE_URL),
       });
+    if (req.method === "GET" && path === "/api/claude")
+      return json(res, 200, await claudeStatus());
     if (req.method === "POST" && path === "/api/turn") {
       if (activeTurn)
         return json(res, 409, {

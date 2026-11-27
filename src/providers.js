@@ -1,7 +1,11 @@
 import { spawn } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+/** @param {string} command CLAUDE_BIN covers a claude that is not on the server's PATH. */
+export const cliBin = (command) =>
+  command === "claude" ? process.env.CLAUDE_BIN || "claude" : command;
 
 export function runProcess(
   command,
@@ -36,19 +40,37 @@ export function runProcess(
     };
     child.stdout.on("data", (c) => collect(c, false));
     child.stderr.on("data", (c) => collect(c, true));
-    child.on("error", reject);
+    child.on("error", (error) => {
+      if (error.code !== "ENOENT") return reject(error);
+      reject(
+        Object.assign(
+          new Error(
+            command +
+              " was not found. Install it or configure its path, then restart Quorum.",
+          ),
+          { code: "ENOENT" },
+        ),
+      );
+    });
     child.stdin.on("error", () => {});
     child.on("close", (code) => {
       if (code === 0) resolve(includeStderr ? out + err : out);
-      else
+      else {
+        // CLIs report problems such as an unknown model on stdout, so keep both streams.
+        const detail = [out, err]
+          .map((text) => text.trim().slice(-600))
+          .filter(Boolean)
+          .join("\n");
         reject(
           new Error(
             command +
               " failed (exit " +
               code +
-              "). Check the local terminal and configuration.",
+              "). " +
+              (detail || "Check the local terminal and configuration."),
           ),
         );
+      }
     });
     child.stdin.end(input);
   });
@@ -63,8 +85,17 @@ async function requestJSON(url, payload, signal, token) {
     },
     body: JSON.stringify(payload),
   });
-  if (!response.ok)
-    throw new Error("Model endpoint returned HTTP " + response.status);
+  if (!response.ok) {
+    const detail = await response.json().then(
+      (body) => body?.error,
+      () => null,
+    );
+    throw new Error(
+      "Model endpoint returned HTTP " +
+        response.status +
+        (typeof detail === "string" ? ": " + detail.slice(0, 1300) : ""),
+    );
+  }
   return response.json();
 }
 function endpoint(base, path) {
@@ -121,22 +152,34 @@ export async function respond(agent, prompt, signal) {
           { agent, prompt },
           signal,
           process.env.QUORUM_CLI_BRIDGE_TOKEN,
-        );
+        ).catch((error) => {
+          // fetch rejects with a TypeError only when it cannot connect at all.
+          if (!(error instanceof TypeError)) throw error;
+          throw new Error(
+            "The Mac CLI bridge is not reachable. Start it with npm run bridge, then try again.",
+          );
+        });
         answer = result.text;
         break;
       }
       if (process.env.QUORUM_ENABLE_CLI !== "1")
         throw new Error(
-          "CLI providers are disabled. Set QUORUM_ENABLE_CLI=1 only if you trust your installed CLI and skills.",
+          "CLI providers are disabled. Restart with npm run start:cli only if you trust your installed CLI and skills.",
         );
       const cwd = await mkdtemp(join(tmpdir(), "quorum-agent-"));
-      const input = prompt.system + "\n\nMeeting data:\n" + prompt.user;
       try {
         if (agent.provider === "claude") {
+          const systemFile = join(cwd, "system-prompt.txt");
+          await writeFile(systemFile, prompt.system, { mode: 0o600 });
           answer = await runProcess(
-            "claude",
+            cliBin("claude"),
             [
               "-p",
+              // No personal CLAUDE.md, skills, plugins or hooks in a meeting turn.
+              "--safe-mode",
+              "--no-session-persistence",
+              "--system-prompt-file",
+              systemFile,
               "--tools",
               "",
               "--strict-mcp-config",
@@ -144,7 +187,7 @@ export async function respond(agent, prompt, signal) {
               '{"mcpServers":{}}',
               ...(agent.model ? ["--model", agent.model] : []),
             ],
-            { cwd, input, signal },
+            { cwd, input: "Meeting data:\n" + prompt.user, signal },
           );
         } else {
           answer = await runProcess(
@@ -158,7 +201,11 @@ export async function respond(agent, prompt, signal) {
               ...(agent.model ? ["--model", agent.model] : []),
               "-",
             ],
-            { cwd, input, signal },
+            {
+              cwd,
+              input: prompt.system + "\n\nMeeting data:\n" + prompt.user,
+              signal,
+            },
           );
         }
       } finally {

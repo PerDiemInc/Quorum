@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { runProcess } from "./providers.js";
+import { cliBin, runProcess } from "./providers.js";
 
 /** @typedef {{name: string, status: string, completed?: number, total?: number, error?: string}} ModelPull */
 /** @type {ModelPull | null} */
@@ -138,17 +138,55 @@ export function installModel(name) {
   return job;
 }
 
+/** Claude readiness for the header chip. It never includes account details.
+ * @returns {Promise<{ready: boolean, disabled?: boolean, message?: string}>}
+ */
+export async function claudeStatus() {
+  const unavailable = (message) => ({ ready: false, message });
+  let cli;
+  if (process.env.QUORUM_CLI_BRIDGE_URL) {
+    try {
+      const response = await fetch(
+        process.env.QUORUM_CLI_BRIDGE_URL + "/status",
+        {
+          headers: {
+            authorization: "Bearer " + process.env.QUORUM_CLI_BRIDGE_TOKEN,
+          },
+          signal: AbortSignal.timeout(10_000),
+        },
+      );
+      if (!response.ok) throw new Error("Bridge unavailable");
+      cli = (await response.json()).claude;
+    } catch {
+      return unavailable(
+        "The Mac CLI bridge is not reachable. Start it with npm run bridge.",
+      );
+    }
+  } else if (process.env.QUORUM_ENABLE_CLI !== "1")
+    return {
+      ready: false,
+      disabled: true,
+      message: "Restart with npm run start:cli to use Claude.",
+    };
+  else cli = await checkCLI("claude");
+  if (!cli?.installed)
+    return unavailable("Claude Code was not found. Install it or set CLAUDE_BIN.");
+  if (!cli.authenticated)
+    return unavailable("Claude Code is not signed in. Run claude auth login.");
+  return { ready: true };
+}
+
 /** @param {'claude' | 'codex'} command */
 export async function checkCLI(command) {
   try {
-    const version = await runProcess(command, ["--version"], {
+    const version = await runProcess(cliBin(command), ["--version"], {
       signal: AbortSignal.timeout(4000),
     });
     // Authentication checks read status only; never start an inference or expose credentials.
     let authenticated = false;
     try {
       const status = await runProcess(
-        command,
+        cliBin(command),
         command === "claude" ? ["auth", "status"] : ["login", "status"],
         { signal: AbortSignal.timeout(4000), includeStderr: true },
       );

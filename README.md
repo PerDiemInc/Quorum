@@ -105,6 +105,26 @@ docker run --rm -v "$PWD:/app:ro" -w /app node:24-alpine npm test
 
 The smoke test checks app health, origin rejection, model discovery, and an actual Ollama response without modifying agents or meetings. Automated tests cover download errors/concurrency, speech request formatting, Host/Origin restrictions, and SQLite persistence across server restart.
 
+## Run on this Mac with the Docker model services
+
+The server runs natively, so it uses your Claude Code and Codex logins directly (no bridge), while Ollama, llama.cpp and Whisper stay in Docker:
+
+```bash
+docker compose stop quorum   # frees port 4711
+npm run services             # model services, published on loopback only
+npm run start:local          # http://127.0.0.1:4711
+```
+
+This needs Node 24+ and images already built by the Docker quick start. Native data lives in `.quorum/quorum.sqlite`, separate from the Docker `quorum-data` volume. To bring existing data over, stop the `quorum` service and, only if that file does not exist yet, run `docker compose cp quorum:/data/. .quorum/`. To go back to Docker, stop the native server and run `docker compose up -d quorum`; changes made natively are not copied back.
+
+The header shows **Claude ready**, **Claude disabled** or **Claude unavailable**. Claude runs in safe mode (none of your CLAUDE.md, skills, plugins or hooks) with no tools and no saved sessions; set `CLAUDE_BIN` if it is not on the PATH. Each message has a play button that reads it aloud (press again to stop). Playing a message pauses the discussion if **Speak replies** is on.
+
+Every agent that runs a model has one selected: new agents start on Claude, Codex or Ollama (the first that is connected), and blank models are filled with that provider's default. With the app running, `npm run check:models` sends one short request to each model in use and to Whisper, and exits non-zero if any fail (set `QUORUM_URL` for a different address). Claude and Codex requests may count against your plan.
+
+The interface is dark by default; **Light mode** in the top bar switches it.
+
+`npm run services` also starts [Kokoro](https://huggingface.co/hexgrad/Kokoro-82M), a neural voice model, from a local image that has `kokoro-onnx` and its model files (`ai-models:cpu` by default; set `KOKORO_IMAGE` for another). It is not downloaded for you. Every agent gets its own voice, which you can change on its card in a meeting; your messages use a separate one. Markdown symbols are removed before speaking.
+
 ## Native quick start
 
 Node.js 24+ is required (built-in SQLite); no npm dependencies. Run `npm start`, then open http://127.0.0.1:4710. State is stored in `.quorum/quorum.sqlite` unless `QUORUM_DATA` is set. Container data lives in a separate Docker volume and is not automatically copied from an existing native checkout.
@@ -174,6 +194,6 @@ docker compose up -d --build quorum
 
 The bridge binds to `127.0.0.1:4712` and permits only the existing Claude/Codex response adapters and capability checks. A random bearer token is stored in ignored `.quorum/bridge/token` and `.env` files with restrictive permissions. The token is available only to the server container, not browser responses. Docker Desktop reaches it through `host.docker.internal`; the models remain on the provider's cloud infrastructure. This is **local CLI access, not local ChatGPT/Claude weights or offline inference**.
 
-Settings performs live bridge authentication checks and enables both CLI providers. Selecting Claude preselects `sonnet`; selecting ChatGPT/Codex preselects `gpt-6.2-sol`. This applies to new agents and provider changes inside meetings. You can edit the model name, or clear it to use the authenticated CLI's default. No claim is made that every model is available on every subscription. Requests may count against your plan or incur provider charges. The bridge must remain running; stopping its terminal disconnects CLI access. No startup daemon is installed.
+Settings performs live bridge authentication checks and enables both CLI providers. Selecting Claude preselects `sonnet`; selecting ChatGPT/Codex preselects `gpt-6.2-sol`. This applies to new agents and provider changes inside meetings. You can edit the model name; a blank one is filled with the default. No claim is made that every model is available on every subscription. Requests may count against your plan or incur provider charges. The bridge must remain running; stopping its terminal disconnects CLI access. No startup daemon is installed.
 
 To disable it, stop the bridge, remove `QUORUM_CLI_BRIDGE_URL` and `QUORUM_CLI_BRIDGE_TOKEN` from `.env`, then recreate the app container. To rotate its token, stop the bridge, remove `.quorum/bridge/token`, rerun setup and restart both processes. Never commit or share `.env` or the token. Native CLI configuration may still affect execution; use only trusted role instructions. The bridge is not a general-purpose shell or a complete isolation boundary.
