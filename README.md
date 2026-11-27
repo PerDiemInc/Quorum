@@ -14,7 +14,9 @@ These use a made-up demo meeting with real model replies.
 
 ![Importing agent profiles from a public GitHub repository](docs/screenshots/import.webp)
 
-![The agent library after importing a team](docs/screenshots/team.webp)
+![The agent library filtered to one group](docs/screenshots/team.webp)
+
+![Skills included with the project](docs/screenshots/library.webp)
 
 ## Website
 
@@ -153,6 +155,8 @@ Node.js 24+ is required (built-in SQLite); no npm dependencies. Run `npm start`,
 
 ## Importing agents and skills
 
+**Included skills.** The [`skills`](skills/README.md) folder holds 249 third-party `SKILL.md` files (MIT and Apache-2.0) gathered from the sources in a Snyk article on skills for founders. Open the import window's **Included skills** tab to add them to an agent; identical copies are listed once. Read the folder's notes on sources, limits and trust.
+
 **Agents → Import from GitHub or Claude:** paste a GitHub address and press **Fetch**. Quorum lists the agent profiles and skills it finds; up to 20 agent profiles are preselected, so **Add** turns them into agents (50 at most in one go). Preview any file first.
 
 - **Agent profiles** are Markdown files with a `name` in their front matter and the instructions below it, the format Claude Code subagents use. Quorum looks in `agents/` folders; in a repository without one, or a folder you link to directly, it checks the other Markdown files. A profile's Claude model is kept when the agent runs on Claude, and skills it names are taken from the same repository. Importing a profile again updates that agent.
@@ -160,6 +164,10 @@ Node.js 24+ is required (built-in SQLite); no npm dependencies. Run `npm start`,
 - **Claude on this computer** lists `~/.claude/agents`, `~/.claude/skills` and `~/.claude/plugins` (override with `CLAUDE_AGENTS_DIR` and `CLAUDE_SKILLS_DIR`). A Docker install cannot see your home folder, so run natively for this.
 
 Public repositories need no account; set `QUORUM_GITHUB_TOKEN` (a read-only token) for private ones or for a higher request limit. Only Markdown text is imported, up to 32,000 characters per file; scripts and linked files are not, and agents cannot run tools. Imported text becomes an agent's instructions and is sent to its model provider, so import only what you trust. Codex can read local files from its sandbox, so be especially careful with unfamiliar files on Codex agents. Long instructions can overflow a small local model's context.
+
+## Interface
+
+The interface uses [HeroUI v3](https://heroui.com) through its framework-free stylesheet: `public/heroui.css` is `@heroui/styles` 3.2.8 unmodified (Apache-2.0), and `public/styles.css` handles layout. There is no React and no build step. To upgrade, replace the file with `dist/heroui.min.css` from a newer release, keep the header comment, and check every screen.
 
 ## Voice meetings
 
@@ -199,7 +207,7 @@ MIT licensed.
 
 ## Specialist team and room modes
 
-**Agents → Add specialist team** adds Developer, Product Manager, Project Manager, Designer, QA, Customer Support, Business Developer, Sales, Marketing and CISO. Each has two focused skills with reviewed references. See [role definitions and sources](docs/agents.md). These templates choose their model automatically; pull `qwen2.5:3b` or larger, because the smoke-test model is too small for useful role replies.
+**Agents → Add specialist team** adds 22 roles in four groups: **Build** (Developer, QA, CISO, Software Architect, DevOps Engineer, Data Analyst, AI Engineer), **Product** (Product Manager, Project Manager, Designer, UX Researcher, Technical Writer), **Grow** (Business Developer, Sales, Marketing, Growth Lead, Customer Success) and **Run** (Customer Support, Operations Lead, Finance Partner, Legal & Privacy, Devil's Advocate). Each has two focused skills. See [role definitions and sources](docs/agents.md). These templates choose their model automatically; pull `qwen2.5:3b` or larger, because the smoke-test model is too small for useful role replies.
 
 Choose **Chat** or **Voice** when creating a meeting, or switch inside the room. Voice mode presents participant tiles, a host microphone indicator and a shared transcript. It enables spoken replies but never starts microphone capture automatically. Click **Turn mic on**, speak, then **Stop & transcribe**, review and send. Recording pauses the agents. This is a Zoom-style room layout with push-to-talk, not WebRTC conferencing, continuous listening, barge-in, or live streaming transcription. Browser-local voice availability varies.
 

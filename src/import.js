@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, delimiter, dirname, join, relative, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 import { MAX_IMPORT, MAX_SKILL_CHARS, MAX_SKILLS } from "./engine.js";
 
 /**
@@ -129,12 +130,23 @@ async function findFiles(directory, wanted, depth, seen, found) {
   }
 }
 
-/** Every readable agent and skill, each with an id that stands in for its path. */
-async function scanLocal() {
+const claudeSource = (kind, root, folders) =>
+  kind === "agent"
+    ? "Claude agent"
+    : basename(root) === "plugins"
+      ? "Claude plugin"
+      : folders[0] === "synced"
+        ? "Synced Claude skill"
+        : "Claude skill";
+
+/** Every readable agent and skill, each with an id that stands in for its path.
+ * @param {{agent: string[], skill: string[]}} roots
+ * @param {(kind: string, root: string, folders: string[]) => string | Promise<string>} sourceOf
+ */
+async function scan(roots, sourceOf) {
   const items = [],
     names = new Set(),
     seen = new Set();
-  const roots = claudeRoots();
   for (const kind of ["agent", "skill"]) {
     const wanted =
       kind === "skill"
@@ -147,14 +159,7 @@ async function scanLocal() {
         try {
           if ((await stat(file)).size > MAX_FILE_BYTES) continue;
           const folders = relative(root, dirname(file)).split(sep);
-          const source =
-            kind === "agent"
-              ? "Claude agent"
-              : basename(root) === "plugins"
-                ? "Claude plugin"
-                : folders[0] === "synced"
-                  ? "Synced Claude skill"
-                  : "Claude skill";
+          const source = await sourceOf(kind, root, folders);
           const content = await readFile(file, "utf8");
           const parsed = parseDocument(content);
           if (kind === "agent" && !parsed.name) continue;
@@ -173,16 +178,27 @@ async function scanLocal() {
   }
   return items.sort((a, b) => a.name.localeCompare(b.name));
 }
+const scanLocal = () => scan(claudeRoots(), claudeSource);
 
-export async function listLocal() {
-  const items = await scanLocal();
-  return { items: items.map(({ content, ...item }) => item) };
+/** The third-party skills kept with this project; each folder names its source. */
+function scanLibrary() {
+  const root =
+    process.env.QUORUM_SKILLS_DIR ||
+    fileURLToPath(new URL("../skills/", import.meta.url));
+  return scan({ agent: [], skill: [root] }, async (_kind, base, [folder]) => {
+    const note = await readFile(join(base, folder, "SOURCE"), "utf8").catch(() => "");
+    return note.split("\n")[0].replace("https://", "") || "Included skill";
+  });
 }
 
+const listed = (items) => ({ items: items.map(({ content, ...item }) => item) });
+export const listLocal = async () => listed(await scanLocal());
+export const listLibrary = async () => listed(await scanLibrary());
+
 /** Browsers choose by id, never by path, so only scanned files can be read. */
-export async function readLocal(ids) {
+async function readScanned(scanner, ids) {
   checkSelection(ids);
-  const all = await scanLocal();
+  const all = await scanner();
   const findSkills = async (wanted) =>
     wanted.flatMap((name) => {
       const found = all.find((i) => i.kind === "skill" && i.name === name);
@@ -203,6 +219,8 @@ export async function readLocal(ids) {
   }
   return { items, skipped };
 }
+export const readLocal = (ids) => readScanned(scanLocal, ids);
+export const readLibrary = (ids) => readScanned(scanLibrary, ids);
 
 function checkSelection(items) {
   if (

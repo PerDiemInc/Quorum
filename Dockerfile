@@ -5,6 +5,7 @@ RUN mkdir /data && chown node:node /data
 COPY --chown=node:node package.json ./
 COPY --chown=node:node src ./src
 COPY --chown=node:node public ./public
+COPY --chown=node:node skills ./skills
 COPY --chown=node:node scripts ./scripts
 USER node
 EXPOSE 4710

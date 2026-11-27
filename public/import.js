@@ -16,11 +16,12 @@ const plural = (count, word) => count + " " + word + (count === 1 ? "" : "s");
  * @param {(profiles: any[], provider: string) => Promise<{added: number, updated: number}>} app.addAgents
  */
 export function createImport(app) {
-  const { node, request, agents } = app;
+  const { node, checkbox, setSelected, chip, request, agents } = app;
+  const SOURCES = ["library", "github", "local"];
   let source = "github";
   /** @type {Record<string, {key: string, kind: string, name: string, detail: string}[] | null>} */
-  const lists = { github: null, local: null };
-  const selected = { github: new Set(), local: new Set() };
+  const lists = { library: null, github: null, local: null };
+  const selected = { library: new Set(), github: new Set(), local: new Set() };
   let address = "";
 
   const status = (message = "", failed = false) => {
@@ -36,9 +37,9 @@ export function createImport(app) {
     );
   };
   const read = (keys) =>
-    source === "local"
-      ? request("/api/import/local", "POST", { ids: keys })
-      : request("/api/import/github/fetch", "POST", { url: address, paths: keys });
+    source === "github"
+      ? request("/api/import/github/fetch", "POST", { url: address, paths: keys })
+      : request("/api/import/" + source, "POST", { ids: keys });
 
   function updateChoices() {
     const items = chosen();
@@ -62,23 +63,21 @@ export function createImport(app) {
 
   function row(item) {
     const el = node("div", undefined, "import-item"),
-      label = node("label", undefined, "check"),
       input = node("input"),
-      text = node("div", undefined, "agent-info"),
-      preview = node("button", "Preview", "secondary"),
+      text = node("span", undefined, "info"),
+      preview = node("button", "Preview", "button button--ghost button--sm"),
       content = node("pre");
-    input.type = "checkbox";
     input.checked = selected[source].has(item.key);
     input.addEventListener("change", () => {
       if (input.checked) selected[source].add(item.key);
       else selected[source].delete(item.key);
       updateChoices();
     });
-    text.append(node("strong", item.name), node("small", item.detail));
-    label.append(
+    text.append(node("strong", item.name), node("small", item.detail, "clamp"));
+    const label = checkbox(
       input,
       text,
-      node("span", item.kind === "agent" ? "Agent" : "Skill", "chip kind-" + item.kind),
+      chip(item.kind === "agent" ? "Agent" : "Skill", item.kind === "agent" ? "accent" : ""),
     );
     preview.type = "button";
     preview.setAttribute("aria-label", "Preview " + item.name);
@@ -108,6 +107,14 @@ export function createImport(app) {
     return el;
   }
 
+  const EMPTY = {
+    library: ["Looking for included skills…", "No included skills were found."],
+    github: ["Paste a GitHub address and press Fetch.", "No agent profiles or skills were found there."],
+    local: [
+      "Looking for Claude agents and skills…",
+      "No Claude agents or skills were found on the computer running Quorum.",
+    ],
+  };
   function render() {
     const items = shown();
     $("import-list").replaceChildren(...items.map(row));
@@ -117,13 +124,7 @@ export function createImport(app) {
           "p",
           lists[source]?.length
             ? "Nothing matches your search."
-            : lists[source]
-              ? source === "github"
-                ? "No agent profiles or skills were found there."
-                : "No Claude agents or skills were found on the computer running Quorum."
-              : source === "github"
-                ? "Paste a GitHub address and press Fetch."
-                : "Looking for Claude agents and skills…",
+            : EMPTY[source][lists[source] ? 1 : 0],
           "muted",
         ),
       );
@@ -132,30 +133,29 @@ export function createImport(app) {
 
   async function show(next) {
     source = next;
-    for (const name of ["github", "local"])
-      $("import-tab-" + name).setAttribute("aria-pressed", String(name === next));
+    for (const name of SOURCES) setSelected($("import-tab-" + name), name === next);
     $("import-github").hidden = next !== "github";
     $("import-search").value = "";
     status();
     render();
-    if (next === "local" && !lists.local) {
+    if (next !== "github" && !lists[next]) {
       try {
-        const { items } = await request("/api/import/local");
-        lists.local = items.map((i) => ({
+        const { items } = await request("/api/import/" + next);
+        lists[next] = items.map((i) => ({
           key: i.id,
           kind: i.kind,
           name: i.name,
           detail: [i.source, i.description].filter(Boolean).join(": "),
         }));
       } catch (e) {
-        lists.local = [];
+        lists[next] = [];
         status(e.message, true);
       }
-      if (source === "local") render();
+      if (source === next) render();
     }
   }
 
-  for (const name of ["github", "local"])
+  for (const name of SOURCES)
     $("import-tab-" + name).addEventListener("click", () => void show(name));
   $("import-search").addEventListener("input", render);
   $("import-close").addEventListener("click", () => $("import-dialog").close());
@@ -267,14 +267,17 @@ export function createImport(app) {
     $("import-target").value = target;
   }
 
-  /** @param {string} target the agent that receives skills; blank for the one being created */
-  return function open(target) {
+  /**
+   * @param {string} target the agent that receives skills; blank for the one being created
+   * @param {'library' | 'github' | 'local'} from the tab to start on
+   */
+  return function open(target, from) {
     fillTargets(target);
     app.providerChoices($("import-provider"));
     // Files may have changed since the dialog was last open.
     lists.local = null;
     selected.local.clear();
     $("import-dialog").showModal();
-    void show(source);
+    void show(from);
   };
 }

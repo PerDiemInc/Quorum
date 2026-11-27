@@ -80,8 +80,8 @@ function node(tag, text, cls) {
   if (cls) el.className = cls;
   return el;
 }
-function button(text, fn) {
-  const b = node("button", text, "secondary");
+function button(text, fn, variant = "secondary") {
+  const b = node("button", text, "button button--sm button--" + variant);
   b.type = "button";
   b.addEventListener("click", fn);
   return b;
@@ -89,43 +89,122 @@ function button(text, fn) {
 /** Initials on a color that stays the same for a given name. */
 function avatar(name) {
   const tone = [...name].reduce((sum, c) => sum + c.charCodeAt(0), 0) % 6;
-  const el = node(
-    "span",
-    name
-      .split(/\s+/)
-      .slice(0, 2)
-      .map((word) => word[0] ?? "")
-      .join(""),
-    "avatar tone-" + tone,
-  );
+  const el = node("span", undefined, "avatar avatar--md tone-" + tone);
   el.setAttribute("aria-hidden", "true");
+  el.append(
+    node(
+      "span",
+      name
+        .split(/\s+/)
+        .slice(0, 2)
+        .map((word) => word[0] ?? "")
+        .join(""),
+      "avatar__fallback",
+    ),
+  );
   return el;
 }
 function chip(text, tone) {
-  const el = node("span", text, "chip");
-  if (tone) el.dataset.tone = tone;
-  return el;
+  return node(
+    "span",
+    text,
+    "chip chip--sm" + (tone ? " chip--soft chip--" + tone : ""),
+  );
 }
 function empty(title, text) {
-  const el = node("div", undefined, "empty");
+  const el = node("div", undefined, "empty-state");
   el.append(node("strong", title), node("span", text));
   return el;
 }
 function agentInfo(agent, detail) {
-  const el = node("div", undefined, "agent-info");
+  const el = node("span", undefined, "info");
   el.append(node("strong", agent.name), node("small", detail));
   return el;
 }
-function icon(path) {
+function svg(paths, attributes = {}) {
   const ns = "http://www.w3.org/2000/svg";
-  const svg = document.createElementNS(ns, "svg");
-  svg.setAttribute("viewBox", "0 0 24 24");
-  svg.setAttribute("aria-hidden", "true");
-  const shape = document.createElementNS(ns, "path");
-  shape.setAttribute("d", path);
-  shape.setAttribute("class", "fill");
-  svg.append(shape);
-  return svg;
+  const el = document.createElementNS(ns, "svg");
+  el.setAttribute("viewBox", "0 0 24 24");
+  el.setAttribute("aria-hidden", "true");
+  for (const [key, value] of Object.entries(attributes)) el.setAttribute(key, value);
+  for (const [d, cls] of paths) {
+    const shape = document.createElementNS(ns, "path");
+    shape.setAttribute("d", d);
+    if (cls) shape.setAttribute("class", cls);
+    el.append(shape);
+  }
+  return el;
+}
+const icon = (path) => svg([[path, "fill"]]);
+/** HeroUI checkbox markup around a native input, so forms and keyboards keep working. */
+function checkbox(input, ...children) {
+  const label = node("label", undefined, "checkbox"),
+    content = node("span", undefined, "checkbox__content"),
+    control = node("span", undefined, "checkbox__control"),
+    indicator = node("span", undefined, "checkbox__indicator");
+  input.type = "checkbox";
+  input.className = "choice-input";
+  indicator.append(
+    svg([["M5 13l4 4L19 7"]], { "data-slot": "checkbox-default-indicator--checkmark" }),
+  );
+  control.append(indicator);
+  content.append(control, ...children);
+  label.append(input, content);
+  label.dataset.selected = String(input.checked);
+  return label;
+}
+/** HeroUI styles selection from an attribute; keep it in step with the native inputs. */
+function syncChoices() {
+  for (const el of document.querySelectorAll(".checkbox, .switch"))
+    el.dataset.selected = String(el.querySelector("input").checked);
+}
+document.addEventListener("change", syncChoices);
+/** Mark one tab or toggle in a HeroUI tab list as chosen. */
+function setSelected(el, selected) {
+  el.dataset.selected = String(selected);
+  el.setAttribute("aria-pressed", String(selected));
+}
+const groupOf = (agent) => agent.category || (agent.source ? "Imported" : "Other");
+const GROUPS = ["Build", "Product", "Grow", "Run", "Imported", "Other"];
+const chosenGroup = { invite: "All", agent: "All" };
+/** Buttons that narrow a list of agents to one group.
+ * @param {'invite' | 'agent'} list @param {() => void} apply */
+function renderFilters(list, apply) {
+  const present = GROUPS.filter((g) => state.agents.some((a) => groupOf(a) === g));
+  if (!present.includes(chosenGroup[list])) chosenGroup[list] = "All";
+  $(list + "-filter").replaceChildren(
+    ...(present.length > 1 ? ["All", ...present] : []).map((group) => {
+      const active = group === chosenGroup[list];
+      const el = button(
+        group,
+        () => {
+          chosenGroup[list] = group;
+          renderFilters(list, apply);
+          apply();
+          $(list + "-filter").querySelector("[aria-pressed=true]").focus();
+        },
+        active ? "primary" : "tertiary",
+      );
+      el.setAttribute("aria-pressed", String(active));
+      return el;
+    }),
+  );
+}
+function matches(agent, list) {
+  const query = $(list + "-search").value.trim().toLowerCase();
+  return (
+    (chosenGroup[list] === "All" || groupOf(agent) === chosenGroup[list]) &&
+    [agent.name, agent.instructions, ...agent.skills.map((s) => s.name)].some((text) =>
+      text.toLowerCase().includes(query),
+    )
+  );
+}
+/** Hidden choices stay selected, so searching never loses a pick. */
+function filterInvite() {
+  for (const label of $("invite").querySelectorAll(".checkbox")) {
+    const agent = state.agents.find((a) => a.id === label.querySelector("input").value);
+    label.hidden = !agent || !matches(agent, "invite");
+  }
 }
 const voiceName = (id) =>
   voices.find(([voice]) => voice === id)?.[1] ?? id;
@@ -165,42 +244,49 @@ function modelOptions(select, selected) {
   select.value = selected;
 }
 function renderAgents() {
-  const list = $("agents"),
-    invite = $("invite");
+  const invite = $("invite");
   const picked = new Set(
     [...invite.querySelectorAll("input:checked")].map((x) => x.value),
   );
-  list.replaceChildren();
   invite.replaceChildren();
   for (const a of state.agents) {
-    const card = node("div", undefined, "agent"),
-      info = agentInfo(a, modelLabel(a));
-    info.append(
-      node("small", a.skills.map((s) => s.name).join(", ") || "No skills"),
-      button("View agent", () => viewAgent(a)),
-    );
-    card.append(avatar(a.name), info);
-    list.append(card);
-    const label = node("label", undefined, "check"),
-      input = node("input");
-    input.type = "checkbox";
+    const input = node("input");
     input.name = "agent";
     input.value = a.id;
     input.checked = picked.has(a.id);
-    label.append(input, avatar(a.name), agentInfo(a, modelLabel(a)));
-    invite.append(label);
+    invite.append(checkbox(input, avatar(a.name), agentInfo(a, modelLabel(a))));
   }
   $("agent-count").textContent = String(state.agents.length);
+  renderFilters("invite", filterInvite);
+  renderFilters("agent", renderAgentDirectory);
+  filterInvite();
   renderAgentDirectory();
   voiceOptions($("agent-form").elements.voice, "", state.agents, {
     lockUsed: true,
   });
   updateInviteSelection();
-  if (!state.agents.length) {
-    list.append(empty("No agents yet", "Create your first agent."));
+  if (!state.agents.length)
     invite.append(empty("No agents available", "Create one to invite it."));
-  }
 }
+$("invite-search").addEventListener("input", filterInvite);
+$("agent-search").addEventListener("input", () => renderAgentDirectory());
+$("invite-shown").addEventListener("click", () => {
+  let room = 12 - $("invite").querySelectorAll("input:checked").length;
+  for (const label of $("invite").querySelectorAll(".checkbox:not([hidden])")) {
+    const input = label.querySelector("input");
+    if (!input.checked && room > 0) {
+      input.checked = true;
+      room--;
+    }
+  }
+  syncChoices();
+  updateInviteSelection();
+});
+$("invite-clear").addEventListener("click", () => {
+  for (const input of $("invite").querySelectorAll("input")) input.checked = false;
+  syncChoices();
+  updateInviteSelection();
+});
 function renderHistory() {
   const list = $("history");
   const query = $("history-search").value.trim().toLowerCase();
@@ -216,12 +302,23 @@ function renderHistory() {
   else if (!meetings.length)
     list.append(empty("No matches", "No meetings match your search."));
   for (const m of meetings.toReversed()) {
-    const item = node("div", undefined, "history-item");
-    const open = button(m.goal, () => openMeeting(m));
-    if (m === current) open.setAttribute("aria-current", "true");
+    const item = node("button", undefined, "history-item");
+    item.type = "button";
+    if (m === current) item.setAttribute("aria-current", "true");
+    item.addEventListener("click", () => openMeeting(m));
     item.append(
-      open,
-      node("p", [m.status, m.createdAt && new Date(m.createdAt).toLocaleDateString(), m.participants.map((agent) => agent.name).join(", ")].filter(Boolean).join(" · "), "muted small"),
+      node("strong", m.goal, "clamp"),
+      node(
+        "span",
+        [
+          m.status,
+          m.createdAt && new Date(m.createdAt).toLocaleDateString(),
+          m.participants.length + (m.participants.length === 1 ? " agent" : " agents"),
+        ]
+          .filter(Boolean)
+          .join(" · "),
+        "meta",
+      ),
     );
     list.append(item);
   }
@@ -241,44 +338,56 @@ $("reuse-team").addEventListener("click", () => {
   // Reuse library selections; each new meeting saves its own participant snapshots.
   const ids = new Set((state.meetings.at(-1)?.participants ?? []).map((agent) => agent.id));
   for (const input of $("invite").querySelectorAll("input")) input.checked = ids.has(input.value);
+  syncChoices();
   updateInviteSelection();
 });
+/** Participants whose settings are open, so re-rendering does not close them. */
+const openSettings = new Set();
+function field(labelText, control) {
+  const label = node("label", undefined, "field");
+  control.className = "input input--secondary input--full-width";
+  label.append(node("span", labelText, "label"), control);
+  return label;
+}
 function renderTeam() {
   $("team").replaceChildren();
   if (!current) return;
   for (const a of current.participants) {
-    const card = node("div", undefined, "participant");
+    const card = node("div", undefined, "participant card"),
+      head = node("div", undefined, "participant__head"),
+      info = agentInfo(a, modelLabel(a)),
+      settings = node("details", undefined, "participant__settings"),
+      toggle = node("summary", "Settings", "button button--ghost button--sm");
     card.dataset.agent = a.id;
     card.classList.toggle("active", speaker?.id === a.id);
-    card.append(
-      avatar(a.name),
-      node("strong", a.name),
-      node(
-        "small",
-        a.skills.map((s) => s.name).join(" · ") || "No skills",
-        "muted",
-      ),
-    );
+    info.append(node("small", a.voice ? voiceName(a.voice).split(" · ")[0] + " voice" : ""));
+    head.append(avatar(a.name), info);
+    toggle.setAttribute("aria-label", a.name + " settings");
+    settings.open = openSettings.has(a.id);
+    settings.addEventListener("toggle", () => {
+      if (settings.open) openSettings.add(a.id);
+      else openSettings.delete(a.id);
+    });
     const select = node("select"),
       model = node("input");
     modelOptions(select, a.provider);
-    select.setAttribute("aria-label", a.name + " provider");
     model.value = a.model;
     model.placeholder = "Auto model";
     model.disabled = a.provider === "demo";
-    model.setAttribute("aria-label", a.name + " model (blank for automatic)");
+    const describe = () => (info.querySelector("small").textContent = modelLabel(a));
     select.addEventListener("change", () => {
       a.provider = select.value;
       a.model = model.value = "";
       model.disabled = a.provider === "demo";
+      describe();
       void save();
     });
     model.addEventListener("change", () => {
       a.model = model.value.trim();
+      describe();
       void save();
     });
     const voice = node("select");
-    voice.setAttribute("aria-label", a.name + " voice");
     voiceOptions(
       voice,
       a.voice,
@@ -295,10 +404,16 @@ function renderTeam() {
       renderTeam();
       void save();
     });
-    const remove = button("Remove from call", () => removeFromCall(a.id));
+    const remove = button("Remove from call", () => removeFromCall(a.id), "danger-soft");
     remove.classList.add("remove-agent");
     remove.setAttribute("aria-label", "Remove " + a.name + " from call");
-    card.append(select, model, voice, remove);
+    const fields = [
+      field("Provider", select),
+      field("Model (blank for automatic)", model),
+      field("Voice", voice),
+    ];
+    settings.append(toggle, ...fields, remove);
+    card.append(head, settings);
     $("team").append(card);
   }
 }
@@ -331,7 +446,7 @@ function renderTranscript() {
   if (!current) return;
   for (const m of current.transcript) {
     if (m.speaker === "Quorum" && !m.model) {
-      $("transcript").append(node("p", m.text, "notice-line"));
+      $("transcript").append(node("p", m.text, "chip chip--sm notice-line"));
       continue;
     }
     const host = m.speaker === "Host",
@@ -339,7 +454,7 @@ function renderTranscript() {
       content = node("div", undefined, "message-body"),
       meta = node("div", undefined, "meta"),
       line = node("div", undefined, "bubble-line"),
-      listen = node("button", undefined, "play");
+      listen = node("button", undefined, "play button button--ghost button--sm button--icon-only");
     meta.append(node("strong", m.speaker));
     if (m.model) meta.append(node("span", m.model));
     if (m.at)
@@ -429,7 +544,9 @@ async function play(message) {
 function renderStatus(message = "") {
   if (!current) return;
   $("status").textContent = current.status;
-  $("status").dataset.status = current.status;
+  $("status").className =
+    "chip chip--soft chip--" +
+    { running: "accent", accepted: "success", paused: "warning" }[current.status];
   $("meeting-panel").dataset.busy = String(Boolean(running));
   $("mic-state").textContent = recording
     ? "Microphone on · recording"
@@ -472,10 +589,11 @@ function openMeeting(m) {
   showView("meetings");
   pause();
   current = m;
+  openSettings.clear();
+  document.querySelector(".meeting-details").open = false;
   if (current.status === "running") current.status = "paused";
   $("new-panel").hidden = true;
   $("meeting-panel").hidden = false;
-  document.body.classList.add("meeting-active");
   renderMode();
   $("goal").textContent = m.goal;
   $("meeting-description").textContent = m.description || "No description";
@@ -494,9 +612,9 @@ function newMeeting() {
     error("Finish recording first.");
     return;
   }
+  showView("meetings");
   pause();
   current = null;
-  document.body.classList.remove("meeting-active");
   $("new-panel").hidden = false;
   $("meeting-panel").hidden = true;
   $("meeting-form").elements.goal.focus();
@@ -724,6 +842,7 @@ async function run() {
 $("agent-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   error();
+  $("create-status").textContent = "";
   const f = e.currentTarget,
     data = new FormData(f);
   try {
@@ -752,11 +871,12 @@ $("agent-form").addEventListener("submit", async (e) => {
     renderPendingSkills();
     f.reset();
     resetAgentModel();
-    $("create-agent").open = false;
+    $("create-agent").close();
     renderAgents();
     await save();
   } catch (e) {
-    error(e.message);
+    // The toast sits behind an open dialog, so say it inside.
+    $("create-status").textContent = e.message;
   }
 });
 $("agent-form").elements.provider.addEventListener("change", (e) => {
@@ -801,6 +921,8 @@ $("meeting-form").addEventListener("submit", (e) => {
   state.meetings.push(m);
   openMeeting(m);
   f.reset();
+  syncChoices();
+  filterInvite();
   updateInviteSelection();
   void save();
 });
@@ -949,10 +1071,14 @@ function renderPendingSkills() {
   $("new-agent-skills").replaceChildren(
     ...pendingSkills.map((skill) => {
       const item = node("li");
-      const remove = button("Remove", () => {
-        pendingSkills = pendingSkills.filter((s) => s !== skill);
-        renderPendingSkills();
-      });
+      const remove = button(
+        "Remove",
+        () => {
+          pendingSkills = pendingSkills.filter((s) => s !== skill);
+          renderPendingSkills();
+        },
+        "ghost",
+      );
       remove.setAttribute("aria-label", "Remove " + skill.name);
       item.append(node("span", skill.name), remove);
       return item;
@@ -973,7 +1099,6 @@ async function addImportedSkills(target, skills) {
   if (!agent) {
     pendingSkills = mergeSkills(pendingSkills, skills);
     renderPendingSkills();
-    $("create-agent").open = true;
     return "the new agent";
   }
   agent.skills = mergeSkills(agent.skills, skills);
@@ -1023,19 +1148,22 @@ async function addImportedAgents(profiles, provider) {
 }
 const openImport = createImport({
   node,
+  checkbox,
+  setSelected,
+  chip,
   request,
   agents: () => state.agents,
   providerChoices: (select) => modelOptions(select, preferredProvider),
   addSkills: addImportedSkills,
   addAgents: addImportedAgents,
 });
-$("new-agent-import").addEventListener("click", () => openImport(""));
+$("new-agent-import").addEventListener("click", () => openImport("", "library"));
 $("import-agents").addEventListener("click", () =>
-  openImport(state.agents[0]?.id ?? ""),
+  openImport(state.agents[0]?.id ?? "", "github"),
 );
 $("detail-import").addEventListener("click", () => {
   $("agent-dialog").close();
-  openImport(viewedAgentId);
+  openImport(viewedAgentId, "library");
 });
 function resetAgentModel() {
   const { provider, model } = $("agent-form").elements;
@@ -1063,7 +1191,7 @@ function renderConnection(claude) {
     chip("Local workspace", "success"),
     chip(
       config.whisper ? "Voice input on" : "Voice input off",
-      config.whisper ? "success" : "",
+      config.whisper ? "success" : "default",
     ),
   ];
   if (config.kokoro) chips.push(chip("Natural voices", "success"));
@@ -1122,29 +1250,43 @@ function showView(view) {
   workspace.classList.toggle("agents-open", view === "agents");
   $("settings-panel").hidden = view !== "settings";
   $("agents-panel").hidden = view !== "agents";
-  for (const item of ["meetings", "agents", "settings"]) {
-    $("nav-" + item).classList.toggle("selected", item === view);
-    $("nav-" + item).setAttribute("aria-pressed", String(item === view));
-  }
+  for (const item of ["meetings", "agents", "settings"])
+    setSelected($("nav-" + item), item === view);
   clearTimeout(modelPoll);
   if (view === "settings") void refreshModels();
 }
 function renderAgentDirectory() {
   $("undo-delete").hidden = !state.deletedAgents?.length;
-  $("agent-directory").replaceChildren();
-  for (const agent of state.agents) {
-    const card = node("article", undefined, "provider-card");
-    card.append(
-      node("strong", agent.name),
-      node("p", modelLabel(agent)),
-      node("p", agent.instructions || "No instructions yet."),
-      button("View details ↗", () => viewAgent(agent)),
-    );
-    $("agent-directory").append(card);
-  }
-  if (!state.agents.length)
+  const shown = state.agents.filter((agent) => matches(agent, "agent"));
+  $("agent-directory").replaceChildren(
+    ...shown.map((agent) => {
+      const card = node("article", undefined, "card agent-card"),
+        head = node("div", undefined, "agent-card__head"),
+        footer = node("div", undefined, "agent-card__footer"),
+        view = button("View details", () => viewAgent(agent), "tertiary");
+      view.setAttribute("aria-label", "View " + agent.name);
+      head.append(avatar(agent.name), agentInfo(agent, modelLabel(agent)));
+      footer.append(chip(groupOf(agent)), view);
+      card.append(
+        head,
+        node("p", agent.instructions || "No instructions yet.", "clamp"),
+        node(
+          "p",
+          agent.skills.length
+            ? agent.skills.map((s) => s.name).join(", ")
+            : "No skills",
+          "small clamp",
+        ),
+        footer,
+      );
+      return card;
+    }),
+  );
+  if (!shown.length)
     $("agent-directory").append(
-      node("p", "No agents yet. Create one to assemble your team.", "muted"),
+      state.agents.length
+        ? empty("No matches", "No agents match your search.")
+        : empty("No agents yet", "Create one to assemble your team."),
     );
 }
 /** @param {{id:string,name:string,provider:string,model:string,voice:string,instructions:string,skills:Array<{name:string,text:string}>}} agent */
@@ -1163,13 +1305,17 @@ function viewAgent(agent) {
     $("agent-detail").append(node("p", "No skills yet."));
   for (const skill of agent.skills) {
     const item = node("details"),
-      remove = button("Remove skill", async () => {
-        agent.skills = agent.skills.filter((s) => s !== skill);
-        renderAgents();
-        viewAgent(agent);
-        await save();
-      });
-    item.append(node("summary", skill.name));
+      remove = button(
+        "Remove skill",
+        async () => {
+          agent.skills = agent.skills.filter((s) => s !== skill);
+          renderAgents();
+          viewAgent(agent);
+          await save();
+        },
+        "danger-soft",
+      );
+    item.append(node("summary", skill.name, "button button--secondary button--sm"));
     if (skill.source)
       item.append(node("p", "Imported from " + skill.source, "muted small"));
     item.append(node("p", skill.text), remove);
@@ -1204,10 +1350,11 @@ $("undo-delete").addEventListener("click", async () => {
   await save();
 });
 $("add-agent").addEventListener("click", () => {
-  $("create-agent").open = true;
-  $("agent-library").scrollIntoView({ block: "start" });
+  $("create-status").textContent = "";
+  $("create-agent").showModal();
   $("agent-form").elements.name.focus();
 });
+$("create-close").addEventListener("click", () => $("create-agent").close());
 for (const view of ["meetings", "agents", "settings"])
   $("nav-" + view).addEventListener("click", () => showView(view));
 
@@ -1219,39 +1366,48 @@ async function refreshModels() {
   try {
     const result = await request("/api/models");
     $("provider-status").replaceChildren();
-    const card = (title, description) => {
-      const el = node("div", undefined, "provider-card");
-      el.append(node("strong", title), node("p", description));
+    const card = (title, label, ready, description) => {
+      const el = node("div", undefined, "card provider");
+      el.append(
+        node("h3", title, "card__title"),
+        chip(label, ready ? "success" : "warning"),
+        node("p", description, "card__description"),
+      );
       $("provider-status").append(el);
     };
     card(
       "Ollama",
-      result.ollama.available
-        ? "Connected · local model service"
-        : "Unavailable · start the Ollama service",
+      result.ollama.available ? "Connected" : "Unavailable",
+      result.ollama.available,
+      result.ollama.available ? "Local model service." : "Start the Ollama service.",
     );
     card(
       "Hugging Face / compatible",
+      result.inference.available ? "Connected" : "Offline",
+      result.inference.available,
       result.inference.available
-        ? "Connected · inference service"
-        : "Offline · optional inference profile is not running",
+        ? "Inference service."
+        : "The optional inference profile is not running.",
     );
     for (const [key, title] of [
       ["codex", "ChatGPT / Codex CLI"],
       ["claude", "Claude Code CLI"],
     ]) {
       const cli = result[key];
+      const ready = cli.installed && cli.authenticated && cli.enabled;
       card(
         title,
+        ready ? "Connected" : "Not ready",
+        ready,
         !cli.installed
-          ? "Not installed in this Quorum runtime"
+          ? "Not installed in this Quorum runtime."
           : !cli.authenticated
-            ? "Installed · login not verified"
+            ? "Installed, but the login is not verified."
             : !cli.enabled
-              ? "Authenticated · CLI access disabled"
+              ? "Authenticated, but CLI access is disabled."
               : result.cliBridge
-                ? "Authenticated · connected through Mac CLI bridge"
-                : "Authenticated · CLI access enabled",
+                ? "Connected through the Mac CLI bridge."
+                : "Authenticated and enabled.",
       );
     }
     if (result.hostAccess) {
@@ -1262,12 +1418,9 @@ async function refreshModels() {
         const host = result.hostAccess[key];
         card(
           title,
-          (host?.authenticated
-            ? "Authenticated on host"
-            : host?.installed
-              ? "Installed; login not verified"
-              : "Not installed") +
-            " · checked " +
+          host?.authenticated ? "Signed in on host" : "Not signed in",
+          Boolean(host?.authenticated),
+          "Checked " +
             new Date(result.hostAccess.checkedAt).toLocaleString() +
             ". Host access is separate from container access.",
         );
@@ -1352,7 +1505,8 @@ $("starter-team").addEventListener("click", async () => {
     await save();
     $("starter-team-status").textContent =
       result.added +
-      " roles added. Models are chosen automatically from your installed Ollama models.";
+      (result.added === 1 ? " agent" : " agents") +
+      " added. Models are chosen automatically from your installed Ollama models.";
   } catch (err) {
     error(err.message);
   } finally {
@@ -1364,10 +1518,11 @@ $("starter-team").addEventListener("click", async () => {
 function renderMode() {
   const voice = current?.mode === "voice";
   $("meeting-panel").classList.toggle("voice-mode", voice);
-  $("mode-chat").setAttribute("aria-pressed", String(!voice));
-  $("mode-voice").setAttribute("aria-pressed", String(voice));
+  setSelected($("mode-chat"), !voice);
+  setSelected($("mode-voice"), voice);
   $("voice-host").hidden = !voice;
   $("voice-output").checked = voice;
+  syncChoices();
   $("transcript-heading").textContent = voice
     ? "Meeting transcript"
     : "Conversation";

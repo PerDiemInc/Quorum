@@ -17,6 +17,7 @@ export function normalizeAgent(input) {
     ...(s.source ? { source: String(s.source).slice(0, 200) } : {}),
   })) : [];
   return { id: String(input.id ?? ''), name, provider, model,
+    ...(input.category ? { category: String(input.category).slice(0, 40) } : {}),
     instructions: String(input.instructions ?? '').slice(0, MAX_SKILL_CHARS),
     voice: String(input.voice ?? '').slice(0, 100), skills };
 }

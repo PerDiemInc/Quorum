@@ -7,6 +7,8 @@ import {
   parseDocument,
   listLocal,
   readLocal,
+  listLibrary,
+  readLibrary,
   parseGitHubURL,
   listGitHub,
   readGitHub,
@@ -68,6 +70,16 @@ test("local Claude agents and skills are listed and read only by id", async () =
   assert.deepEqual(agent.skills.map((s) => s.name), ["code-review"]);
   await assert.rejects(readLocal(["../../etc/passwd"]), /no longer there/);
   await assert.rejects(readLocal([]), /between 1 and/);
+});
+
+test("every included skill is listed with its source and can be added", async () => {
+  delete process.env.QUORUM_SKILLS_DIR;
+  const { items } = await listLibrary();
+  assert.ok(items.length > 200, String(items.length));
+  assert.ok(items.every((i) => i.kind === "skill" && /^github\.com\/[\w-]+\/[\w.-]+$/.test(i.source)));
+  const marketing = items.find((i) => i.name === "pricing");
+  const { items: [skill] } = await readLibrary([marketing.id]);
+  assert.ok(skill.text.length > 500);
 });
 
 test("only GitHub addresses are accepted", () => {

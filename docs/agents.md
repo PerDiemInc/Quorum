@@ -2,6 +2,8 @@
 
 Reviewed selected listings at Skills Directory on November 26, 2026. This is a focused role review, not an audit of the entire directory or the bundled code in every listing. Directory security grades are third-party claims, not a guarantee.
 
+The table covers the first ten roles. The twelve added later (Software Architect, DevOps Engineer, Data Analyst, AI Engineer, UX Researcher, Technical Writer, Growth Lead, Customer Success, Operations Lead, Finance Partner, Legal & Privacy and Devil's Advocate) carry original Quorum guidance with no third-party reference. Legal & Privacy spots issues; it does not give legal advice.
+
 The team contains original, concise Quorum meeting instructions informed by these references. It does **not** vendor entire third-party skill packages or execute their scripts. Some source packages assume external tools, workspace files, orchestration, or licenses that do not fit this meeting app. Those assumptions are not carried into the role prompts. The source links and review date are visible in each agent's skill text.
 
 | Agent | Skills | Reviewed reference |
@@ -19,7 +21,7 @@ The team contains original, concise Quorum meeting instructions informed by thes
 
 ## Use
 
-Choose **Agents → Add specialist team (10 roles)**. This is idempotent: existing named roles, customizations, archived roles, and previous meetings remain intact. Each new role uses Ollama with an [automatically chosen model](../README.md#automatic-model-selection); install a capable one in Settings or with `docker compose exec ollama ollama pull qwen2.5:3b`. The smaller `qwen2.5:0.5b` remains the smoke-test model. Model size is not a guarantee of expertise; evaluate important recommendations against evidence.
+Choose **Agents → Add specialist team (22 roles)**. This is idempotent: existing named roles, customizations, archived roles, and previous meetings remain intact. Each new role uses Ollama with an [automatically chosen model](../README.md#automatic-model-selection); install a capable one in Settings or with `docker compose exec ollama ollama pull qwen2.5:3b`. The smaller `qwen2.5:0.5b` remains the smoke-test model. Model size is not a guarantee of expertise; evaluate important recommendations against evidence.
 
 Example meeting: “Decide the smallest safe launch for a self-service onboarding flow.” Invite Product Manager, Developer, Designer, QA and CISO. Add Project Manager for scheduling, and the commercial roles when acquisition, sales or support is part of the decision. You do not have to invite every role to every meeting.
 
