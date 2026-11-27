@@ -4,8 +4,8 @@ import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
-import { normalizeAgent, makePrompt } from "./engine.js";
-import { respond } from "./providers.js";
+import { normalizeAgent } from "./engine.js";
+import { freshTurn } from "./turn.js";
 import { transcribe, synthesize } from "./speech.js";
 import {
   modelSettings,
@@ -44,6 +44,7 @@ const assets = new Map([
   ["/heroui.css", ["heroui.css", "text/css; charset=utf-8"]],
   ["/engine.js", ["../src/engine.js", "text/javascript; charset=utf-8"]],
   ["/import.js", ["import.js", "text/javascript; charset=utf-8"]],
+  ["/mentions.js", ["mentions.js", "text/javascript; charset=utf-8"]],
 ]);
 // Docker listens on its network interface; the published port stays loopback-only.
 /** @type {string} */
@@ -199,12 +200,9 @@ const server = createServer(async (req, res) => {
       activeTurn = true;
       try {
         const model = await chooseModel(agent, signal);
-        const text = await respond(
-          { ...agent, model },
-          makePrompt(agent, data.meeting),
-          signal,
-        );
-        if (!abort.signal.aborted) return json(res, 200, { text, model });
+        const result = await freshTurn({ ...agent, model }, data.meeting, signal);
+        if (!abort.signal.aborted)
+          return json(res, 200, { ...result, model });
       } finally {
         activeTurn = false;
       }

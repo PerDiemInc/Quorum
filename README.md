@@ -165,6 +165,12 @@ Node.js 24+ is required (built-in SQLite); no npm dependencies. Run `npm start`,
 
 Public repositories need no account; set `QUORUM_GITHUB_TOKEN` (a read-only token) for private ones or for a higher request limit. Only Markdown text is imported, up to 32,000 characters per file; scripts and linked files are not, and agents cannot run tools. Imported text becomes an agent's instructions and is sent to its model provider, so import only what you trust. Codex can read local files from its sandbox, so be especially careful with unfamiliar files on Codex agents. Long instructions can overflow a small local model's context.
 
+## Tagging and repetition
+
+Type `@` in the message box to tag an agent in the meeting: arrows choose, **Enter** or **Tab** insert, and **Tag @** on an agent's card does the same. When you send a message with tags, those agents answer it in the order tagged and the discussion then pauses; the rotation resumes where it left off.
+
+A reply that mostly repeats what an agent already said is refused and requested again, up to three times, then that turn is skipped. When every agent in the room has been skipped in a row, the discussion stops and asks you for direction. Near-identical earlier messages are also left out of what models are shown. The check compares wording, so a reply that makes the same point in new words can still get through, and small local models repeat more than larger ones.
+
 ## Interface
 
 The interface uses [HeroUI v3](https://heroui.com) through its framework-free stylesheet: `public/heroui.css` is `@heroui/styles` 3.2.8 unmodified (Apache-2.0), and `public/styles.css` handles layout. There is no React and no build step. To upgrade, replace the file with `dist/heroui.min.css` from a newer release, keep the header comment, and check every screen.

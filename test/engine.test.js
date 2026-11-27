@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { nextParticipant, canContinue, normalizeAgent, makePrompt, removeParticipant, assignVoices, speakable, speechChunks, hostVoice, voices } from '../src/engine.js';
+import { nextParticipant, canContinue, normalizeAgent, makePrompt, removeParticipant, assignVoices, speakable, speechChunks, hostVoice, voices, findRepeat, withoutCopies, withoutRepeatedSentences, findMentions, mentionAt, suggestMentions } from '../src/engine.js';
 test('participants take turns in order and repeat', () => {
   const p = [{name:'A'},{name:'B'}];
   assert.equal(nextParticipant(p,0).name,'A');
@@ -66,4 +66,50 @@ test('speech drops Markdown and splits long text between sentences', () => {
   const parts = speechChunks(text.trim(), 30);
   assert.equal(parts.join(' '), text.trim());
   assert.equal(parts[0], 'One is here. Two follows it!');
+});
+const plan = 'We should run a two week pilot with fifty cups and measure how many come back each day.';
+const says = (speaker, text) => ({ speaker, text });
+test('a reply that mostly copies an earlier agent message is a repeat', () => {
+  const history = [says('Host', 'Where do we start?'), says('Sales', plan)];
+  assert.equal(findRepeat(plan, history), history[1]);
+  assert.equal(findRepeat('I agree. ' + plan + ' Thanks.', history), history[1]);
+  assert.equal(findRepeat('Who empties the return bin during the morning rush, and what happens when it is full?', history), null);
+  // Quoting the host, or using the same topic words, is not a repeat.
+  assert.equal(findRepeat('Where do we start?', history), null);
+  assert.equal(findRepeat('A pilot is fine, but fifty cups may run out before the dishwasher finishes its first cycle.', history), null);
+  assert.equal(findRepeat('Yes.', [says('QA', 'yes')]).speaker, 'QA');
+});
+test('copies are left out of the prompt and sentences are not doubled', () => {
+  const history = [says('A', plan), says('B', plan), says('Host', plan), says('C', 'Something entirely different about who washes the cups and when they do it.')];
+  assert.deepEqual(withoutCopies(history).map(m => m.speaker), ['A', 'Host', 'C']);
+  const agent = normalizeAgent({ name: 'B', provider: 'ollama' });
+  assert.equal(JSON.parse(makePrompt(agent, { goal: 'g', participants: [], transcript: history }).user).transcript.length, 3);
+  assert.equal(withoutRepeatedSentences('We need a clear owner for this. We need a clear owner for this. Who is it?'), 'We need a clear owner for this. Who is it?');
+  assert.equal(withoutRepeatedSentences('Line one is long enough here.\n\nLine two is also long enough.'), 'Line one is long enough here.\n\nLine two is also long enough.');
+});
+test('tags match whole names, the longest first, and ignore addresses', () => {
+  const people = ['Product', 'Product Manager', 'QA', "Devil's Advocate"].map(name => ({ name }));
+  const names = text => findMentions(text, people).map(p => p.name);
+  assert.deepEqual(names('@qa then @Product Manager, and @QA again'), ['QA', 'Product Manager']);
+  assert.deepEqual(names("(@Devil's Advocate) @Product?"), ["Devil's Advocate", 'Product']);
+  assert.deepEqual(names('mail me@qa.example, ask @QAx or @Nobody'), []);
+  assert.equal(speakable('@QA please check'), 'QA please check');
+});
+test('autocomplete follows the tag being typed', () => {
+  assert.deepEqual(mentionAt('hi @prod', 8), { start: 3, query: 'prod' });
+  assert.deepEqual(mentionAt('@', 1), { start: 0, query: '' });
+  assert.equal(mentionAt('me@qa', 5), null);
+  assert.equal(mentionAt('@qa\nmore', 8), null);
+  const people = ['Product Manager', 'Project Manager', 'Customer Success'].map(name => ({ name }));
+  const found = q => suggestMentions(q, people).map(p => p.name);
+  assert.deepEqual(found('pro'), ['Product Manager', 'Project Manager']);
+  assert.deepEqual(found('man'), ['Product Manager', 'Project Manager']);
+  assert.deepEqual(found('Product Manager '), []);
+});
+test('a directly tagged agent is told to answer, once', () => {
+  const agent = normalizeAgent({ name: 'QA', provider: 'claude' });
+  const meeting = transcript => ({ goal: 'g', participants: [agent], transcript });
+  assert.match(makePrompt(agent, meeting([says('Host', '@QA what breaks?')])).system, /addressed you directly/);
+  assert.doesNotMatch(makePrompt(agent, meeting([says('Host', '@QA what breaks?'), says('QA', 'The bin.')])).system, /addressed you directly/);
+  assert.doesNotMatch(makePrompt(agent, meeting([says('Host', 'What breaks?')])).system, /addressed you directly/);
 });

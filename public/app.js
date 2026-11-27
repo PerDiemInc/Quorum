@@ -11,8 +11,10 @@ import {
   speechChunks,
   MAX_SKILLS,
   MAX_SKILL_CHARS,
+  findMentions,
 } from "/engine.js";
 import { createImport } from "/import.js";
+import { createMentions } from "/mentions.js";
 
 const $ = (id) => document.getElementById(id);
 const names = {
@@ -412,8 +414,12 @@ function renderTeam() {
       field("Model (blank for automatic)", model),
       field("Voice", voice),
     ];
+    const ask = button("Tag @", () => mentions.insert(a), "ghost");
+    ask.classList.add("tag-agent");
+    ask.setAttribute("aria-label", "Tag " + a.name + " in your message");
+    ask.disabled = current.status === "accepted";
     settings.append(toggle, ...fields, remove);
-    card.append(head, settings);
+    card.append(head, ask, settings);
     $("team").append(card);
   }
 }
@@ -471,7 +477,7 @@ function renderTranscript() {
     listen.message = m;
     listen.addEventListener("click", () => void play(m));
     showPlayState(listen);
-    line.append(node("p", m.text, "bubble"), listen);
+    line.append(bubble(m.text), listen);
     content.append(meta, line);
     row.append(avatar(m.speaker), content);
     $("transcript").append(row);
@@ -485,6 +491,26 @@ function renderTranscript() {
     );
   $("transcript").scrollTop = $("transcript").scrollHeight;
 }
+/** A message body with the tags of people in this meeting set apart. */
+function bubble(text) {
+  const el = node("p", undefined, "bubble");
+  const tagged = findMentions(text, current.participants)
+    .map((p) => p.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+    .sort((a, b) => b.length - a.length);
+  if (!tagged.length) el.textContent = text;
+  else
+    // The capture keeps each tag, at the odd positions of the result.
+    text
+      .split(new RegExp("(@(?:" + tagged.join("|") + "))(?![\\p{L}\\p{N}_])", "iu"))
+      .forEach((part, i) => el.append(i % 2 ? node("span", part, "mention") : part));
+  return el;
+}
+const mentions = createMentions({
+  input: $("message"),
+  list: $("mention-list"),
+  people: () => current?.participants ?? [],
+  show: (a) => [avatar(a.name), agentInfo(a, modelLabel(a))],
+});
 /** The message being read aloud from its play button, if any. */
 let playback = null;
 function showPlayState(el) {
@@ -562,6 +588,8 @@ function renderStatus(message = "") {
     remove.disabled = last || current.status === "accepted";
     remove.title = last ? "A meeting needs at least one agent" : "";
   }
+  for (const ask of $("team").querySelectorAll(".tag-agent"))
+    ask.disabled = current.status === "accepted";
   $("record").disabled = current.status === "accepted" || !config.whisper;
   $("message-form").querySelector("button[type=submit]").disabled =
     current.status === "accepted" || Boolean(recording);
@@ -582,6 +610,7 @@ function pause() {
   void save();
 }
 function openMeeting(m) {
+  mentions.close();
   if (recording) {
     error("Finish recording first.");
     return;
@@ -753,7 +782,9 @@ async function requestTurn(data, signal) {
     }
   }
 }
-async function run() {
+/** Run the discussion in rotation, or only the agents the host just tagged.
+ * @param {string[]} [asked] ids of tagged agents, in order */
+async function run(asked) {
   if (!current || running || recording || current.status === "accepted") return;
   stopPlayback();
   const m = current,
@@ -764,16 +795,32 @@ async function run() {
   error();
   void save();
   renderHistory();
-  const limit = Math.min(
-    60,
-    Math.max(1, Math.floor(Number($("limit").value) || 12)),
-  );
-  let turns = 0;
+  const queue = asked ? [...asked] : null;
+  const limit = queue
+    ? queue.length
+    : Math.min(60, Math.max(1, Math.floor(Number($("limit").value) || 12)));
+  let turns = 0,
+    // Agents in a row with nothing new to say.
+    quiet = [];
+  const stalled = () => !queue && quiet.length >= m.participants.length;
   try {
-    while (token === revision && canContinue(m, turns, limit)) {
+    while (token === revision && canContinue(m, turns, limit) && !stalled()) {
+      const tagged = queue && m.participants.find((p) => p.id === queue[0]);
+      // A tagged agent may have left the call while others were answering.
+      if (queue && !tagged) {
+        queue.shift();
+        turns++;
+        continue;
+      }
       const agent = normalizeAgent(
-        nextParticipant(m.participants, m.cursor ?? 0),
+        tagged || nextParticipant(m.participants, m.cursor ?? 0),
       );
+      /** Tagged answers leave the rotation where it was. */
+      const advance = () => {
+        if (queue) queue.shift();
+        else m.cursor = (m.cursor ?? 0) + 1;
+        turns++;
+      };
       renderStatus(
         agent.name + " is thinking · " + (turns + 1) + " / " + limit,
       );
@@ -802,13 +849,19 @@ async function run() {
       }
       if (token !== revision || ctrl.signal.aborted) break;
       if (turn.signal.aborted) continue;
+      if (result.skipped) {
+        quiet.push(agent.name);
+        advance();
+        void save();
+        continue;
+      }
+      quiet = [];
       addMessage(
         agent.name,
         result.text,
         names[agent.provider] + (result.model ? " / " + result.model : ""),
       );
-      m.cursor = (m.cursor ?? 0) + 1;
-      turns++;
+      advance();
       void save();
       if ($("voice-output").checked) {
         renderStatus(agent.name + " is speaking");
@@ -829,10 +882,17 @@ async function run() {
       speaker = null;
       if (m.status === "running") m.status = "paused";
       clearSpeaker();
+      const nothingNew = quiet.length
+        ? [...new Set(quiet)].join(", ") + " had nothing new to add. "
+        : "";
       renderStatus(
-        turns >= limit
-          ? "Turn budget reached. Accept the outcome or continue."
-          : "Paused.",
+        stalled()
+          ? "Nobody has anything new to add. Give them direction, tag someone with @, or accept the outcome."
+          : queue
+            ? nothingNew + "Continue when ready."
+            : turns >= limit
+              ? nothingNew + "Turn budget reached. Accept the outcome or continue."
+              : "Paused.",
       );
       renderHistory();
       void save();
@@ -932,10 +992,13 @@ $("message-form").addEventListener("submit", (e) => {
   const input = e.currentTarget.elements.message,
     text = input.value.trim();
   if (!text) return;
+  mentions.close();
   pause();
   addMessage("Host", text);
   input.value = "";
-  renderStatus("Feedback added. Continue when ready.");
+  const asked = findMentions(text, current.participants);
+  if (asked.length) void run(asked.map((a) => a.id));
+  else renderStatus("Feedback added. Continue when ready.");
 });
 $("resume").addEventListener("click", () => void run());
 $("pause").addEventListener("click", pause);

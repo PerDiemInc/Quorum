@@ -155,7 +155,14 @@ details[open] > :not(summary) { margin-top: 0.875rem; }
 .activity .spinner { display: none; width: 1rem; height: 1rem; }
 #meeting-panel[data-busy="true"] .activity .spinner { display: block; }
 #message-form { gap: 0.375rem; }
-.composer { display: flex; flex-direction: column; gap: 0.5rem; }
+.composer { position: relative; display: flex; flex-direction: column; gap: 0.5rem; }
+/* @ suggestions open above the text box, over the conversation. */
+#mention-list { position: absolute; z-index: 10; bottom: calc(100% + 0.375rem); left: 0; display: flex; flex-direction: column; gap: 0.125rem; width: min(22rem, 100%); max-height: 16rem; overflow: auto; margin: 0; padding: 0.375rem; list-style: none; background: var(--overlay); border-radius: 1.25rem; box-shadow: var(--overlay-shadow); }
+#mention-list .list-box-item { display: flex; flex: none; align-items: center; gap: 0.625rem; min-height: 2.75rem; padding: 0.375rem 0.5rem; border-radius: 0.875rem; }
+#mention-list .list-box-item[data-focused], #mention-list .list-box-item:hover { background: var(--default); }
+.mention { border-radius: 0.375rem; padding: 0 0.25rem; background: var(--accent-soft); color: var(--accent-soft-foreground); font-weight: 600; }
+.host .mention { background: color-mix(in oklab, var(--accent-foreground) 22%, transparent); color: var(--accent-foreground); }
+.participant .tag-agent { align-self: flex-start; }
 .room { display: flex; flex-direction: column; gap: 1rem; position: sticky; top: 5rem; max-height: calc(100dvh - 6rem); overflow: auto; }
 .voice-host { flex-direction: row; align-items: center; }
 .voice-host div { display: flex; flex-direction: column; }
@@ -176,7 +183,7 @@ details[open] > :not(summary) { margin-top: 0.875rem; }
 .voice-mode .participant__head { flex-direction: column; }
 .voice-mode .participant .avatar { width: 4rem; height: 4rem; }
 .voice-mode .participant .avatar__fallback { font-size: 1.25rem; }
-.voice-mode .participant summary { align-self: center; }
+.voice-mode .participant summary, .voice-mode .participant .tag-agent { align-self: center; }
 .voice-mode .participant.active::after { content: "Speaking or thinking"; font-size: 0.75rem; font-weight: 550; color: var(--accent-soft-foreground); }
 
 /* Agents and settings */

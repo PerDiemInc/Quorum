@@ -211,13 +211,17 @@
               <form id="message-form">
                 <label for="message" class="label">Join the conversation</label>
                 <div class="composer">
+                  <ul id="mention-list" class="list-box popover" role="listbox" aria-label="Agents to tag" hidden></ul>
                   <textarea
                     id="message"
                     class="textarea textarea--secondary textarea--full-width"
                     name="message"
                     maxlength="16000"
                     rows="2"
-                    placeholder="Ask a question, challenge an idea, or give feedback"
+                    placeholder="Give feedback, or type @ to ask a specific agent"
+                    aria-autocomplete="list"
+                    aria-controls="mention-list"
+                    aria-expanded="false"
                   ></textarea>
                   <div class="actions end">
                     <button id="record" type="button" class="button button--tertiary button--sm">

@@ -102,22 +102,29 @@ async function requestJSON(url, payload, signal, token) {
   }
   return response.json();
 }
+// Placeholders that differ from turn to turn, so a demo meeting reads as a sequence.
+const DEMO_LINES = [
+  "Let us identify a concrete next step and ask the host what evidence would make the outcome satisfactory.",
+  "Which assumption are we least sure about? I suggest we name it before going further.",
+  "I propose one owner and a date for the next step, then we check what changed.",
+  "What would make us stop? Agreeing on that now keeps the plan honest.",
+  "Host, which constraint matters most here: time, cost or quality?",
+];
 function endpoint(base, path) {
   return base.replace(/\/+$/, "") + path;
 }
-export async function respond(agent, prompt, signal) {
+/** @param {{attempt?: number}} [options] a later attempt asks local models for more variety */
+export async function respond(agent, prompt, signal, { attempt = 0 } = {}) {
   const messages = [
     { role: "system", content: prompt.system },
     { role: "user", content: prompt.user },
   ];
   let answer;
   switch (agent.provider) {
-    case "demo":
-      return (
-        "[Demo only] " +
-        agent.name +
-        ": Let us identify a concrete next step and ask the host what evidence would make the outcome satisfactory."
-      );
+    case "demo": {
+      const turn = (JSON.parse(prompt.user).transcript?.length ?? 0) % DEMO_LINES.length;
+      return "[Demo only] " + agent.name + ": " + DEMO_LINES[turn];
+    }
     case "ollama": {
       const result = await requestJSON(
         endpoint(
@@ -128,7 +135,14 @@ export async function respond(agent, prompt, signal) {
           model: agent.model,
           messages,
           stream: false,
-          options: { num_predict: 700 },
+          options: {
+            num_predict: 700,
+            // The default window can cut off the instructions of a long meeting.
+            num_ctx: 8192,
+            temperature: 0.8 + attempt * 0.2,
+            repeat_penalty: 1.15,
+            repeat_last_n: 512,
+          },
         },
         signal,
       );
@@ -141,7 +155,14 @@ export async function respond(agent, prompt, signal) {
           process.env.QUORUM_OPENAI_URL ?? "http://127.0.0.1:8080/v1",
           "/chat/completions",
         ),
-        { model: agent.model, messages, max_tokens: 700, stream: false },
+        {
+          model: agent.model,
+          messages,
+          max_tokens: 700,
+          stream: false,
+          temperature: 0.8 + attempt * 0.2,
+          frequency_penalty: 0.5,
+        },
         signal,
         process.env.QUORUM_OPENAI_KEY,
       );
