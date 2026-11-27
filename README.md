@@ -27,7 +27,9 @@ Open http://127.0.0.1:4710. Choose the two built-in **demo** agents to exercise 
 
 - **Ollama:** start Ollama, pull a model (e.g. `ollama pull qwen3:8b`) and create an agent with provider Ollama and that model name. Default endpoint: http://127.0.0.1:11434.
 - **Hugging Face / local models:** serve a downloaded compatible model through llama.cpp, LM Studio, vLLM or another OpenAI-compatible chat server. Set `QUORUM_OPENAI_URL=http://127.0.0.1:8080/v1` and use its model identifier.
-- **Claude Code / Codex:** install and authenticate the respective CLI yourself, then start with `QUORUM_ENABLE_CLI=1 npm start`. Use a supported model name or leave blank for the CLI default. These clients usually use cloud inference, not offline inference. Claude receives an empty tool list and empty MCP configuration; Codex uses its read-only sandbox. These settings are not a complete isolation boundary: installed CLI configuration, integrations and read access may still apply. Enable only for trusted agents and skills.
+- **Claude Code / Codex:** install and authenticate the respective CLI yourself, then start with `npm run start:cli` (the same as `QUORUM_ENABLE_CLI=1 npm start`). Use a supported model name such as `sonnet`, or leave blank for the CLI default. These clients usually use cloud inference, not offline inference. Claude runs in safe mode (no CLAUDE.md, skills, plugins or hooks of yours) with an empty tool list, an empty MCP configuration and no saved sessions; the agent's instructions and skills become its system prompt. Codex uses its read-only sandbox. These settings are not a complete isolation boundary: managed policy, CLI settings, integrations and read access may still apply. Enable only for trusted agents and skills.
+  - The header shows **Claude ready**, **Claude disabled** (restart with `npm run start:cli`) or **Claude unavailable** (not installed or not signed in; run `claude auth login`).
+  - Set `CLAUDE_BIN` if `claude` is not on the server's PATH. Safe mode needs a recent Claude Code release; run `claude update` if the option is rejected.
 - **Other endpoints:** an OpenAI-compatible provider can use a deliberately configured remote URL and optional `QUORUM_OPENAI_KEY`. This sends conversation and assigned instructions to that service.
 
 ## Voice meetings
@@ -49,6 +51,8 @@ WHISPER_MODEL="$HOME/models/ggml-base.bin" npm start
 If the binary is not named whisper-cli in your installation, set WHISPER_BIN to its path. FFMPEG_BIN can also be overridden.
 
 Click **Record voice** (microphone permission required), speak, stop the recording, review the local transcription, send it and continue the meeting. Recordings automatically stop after 60 seconds; temporary audio is deleted after transcription. This is push-to-talk, not continuous voice activity detection.
+
+Each message has a play button that reads it aloud (press again to stop). Playing a message pauses the discussion if **Speak replies** is on.
 
 For distinct agent voices, run an OpenAI-compatible Kokoro speech server separately, set `KOKORO_URL=http://127.0.0.1:8880/v1`, and specify a supported voice in each agent (e.g. af_heart). Enable **Speak replies**. Without Kokoro, Quorum uses available local browser speech voices only; availability varies by browser.
 

@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -17,14 +17,48 @@ export function runProcess(command, args, { input, cwd, signal, maxBytes = 2_000
     };
     child.stdout.on('data', c => collect(c, false));
     child.stderr.on('data', c => collect(c, true));
-    child.on('error', reject);
+    child.on('error', error => reject(error.code === 'ENOENT'
+      ? Object.assign(new Error(command + ' was not found. Install it or configure its path, then restart Quorum.'), { code: 'ENOENT' })
+      : error));
     child.stdin.on('error', () => {});
     child.on('close', code => {
-      if (code === 0) resolve(out);
-      else reject(new Error(command + ' failed (exit ' + code + '). Check the local terminal and configuration.'));
+      if (code === 0) { resolve(out); return; }
+      // CLIs report errors on either stream, so keep the end of both.
+      const detail = [out, err].map(text => text.trim().slice(-600)).filter(Boolean).join('\n');
+      reject(Object.assign(new Error(command + ' failed (exit ' + code + '). ' + (detail || 'It printed no output.')), { stdout: out }));
     });
     child.stdin.end(input);
   });
+}
+const claudeBin = () => process.env.CLAUDE_BIN ?? 'claude';
+export async function claudeStatus(signal = AbortSignal.timeout(5000)) {
+  let output;
+  try { output = await runProcess(claudeBin(), ['auth', 'status', '--json'], { signal }); }
+  catch (error) {
+    if (error.code === 'ENOENT') return { ready: false, message: 'Claude Code was not found. Install it or set CLAUDE_BIN.' };
+    output = error.stdout;
+  }
+  // Only the signed-in flag leaves this function; the rest of the status holds account details.
+  try {
+    const { loggedIn } = JSON.parse(output);
+    if (loggedIn === true) return { ready: true };
+    if (loggedIn === false) return { ready: false, message: 'Claude Code is not signed in. Run: claude auth login' };
+  } catch {}
+  return { ready: false, message: 'Claude Code status could not be checked. Run: claude auth status' };
+}
+async function runClaude(model, prompt, cwd, signal) {
+  // A file keeps large skill sets clear of command-line length limits.
+  const systemFile = join(cwd, 'system-prompt.txt');
+  await writeFile(systemFile, prompt.system, { mode: 0o600 });
+  return runProcess(claudeBin(), [
+    '-p',
+    '--safe-mode',
+    '--no-session-persistence',
+    '--system-prompt-file', systemFile,
+    '--tools', '',
+    '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}',
+    ...(model ? ['--model', model] : []),
+  ], { cwd, signal, input: 'Meeting data:\n' + prompt.user });
 }
 async function requestJSON(url, payload, signal, token) {
   const response = await fetch(url, {
@@ -56,13 +90,13 @@ export async function respond(agent, prompt, signal) {
     }
     case 'claude':
     case 'codex': {
-      if (process.env.QUORUM_ENABLE_CLI !== '1') throw new Error('CLI providers are disabled. Set QUORUM_ENABLE_CLI=1 only if you trust your installed CLI and skills.');
+      if (process.env.QUORUM_ENABLE_CLI !== '1') throw new Error('CLI providers are disabled. Restart with npm run start:cli (sets QUORUM_ENABLE_CLI=1) only if you trust your installed CLI and skills.');
       const cwd = await mkdtemp(join(tmpdir(), 'quorum-agent-'));
-      const input = prompt.system + '\n\nMeeting data:\n' + prompt.user;
       try {
         if (agent.provider === 'claude') {
-          answer = await runProcess('claude', ['-p', '--tools', '', '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}', ...(agent.model ? ['--model', agent.model] : [])], { cwd, input, signal });
+          answer = await runClaude(agent.model, prompt, cwd, signal);
         } else {
+          const input = prompt.system + '\n\nMeeting data:\n' + prompt.user;
           answer = await runProcess('codex', ['exec', '--sandbox', 'read-only', '--skip-git-repo-check', '--ephemeral', ...(agent.model ? ['--model', agent.model] : []), '-'], { cwd, input, signal });
         }
       } finally { await rm(cwd, { recursive: true, force: true }); }

@@ -8,6 +8,7 @@
   },
   "scripts": {
     "start": "node src/server.js",
+    "start:cli": "QUORUM_ENABLE_CLI=1 node src/server.js",
     "dev": "node --watch src/server.js",
     "test": "node --test",
     "check": "node --check src/server.js && node --check src/providers.js && node --check src/engine.js && node --check src/speech.js && node --check public/app.js"

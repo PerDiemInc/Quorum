@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import { normalizeAgent, makePrompt } from './engine.js';
-import { respond } from './providers.js';
+import { respond, claudeStatus } from './providers.js';
 import { transcribe, synthesize } from './speech.js';
 
 const port = Number(process.env.PORT ?? 4710);
@@ -56,7 +56,10 @@ const server = createServer(async (req, res) => {
       if (!Array.isArray(data?.agents) || !Array.isArray(data?.meetings)) return json(res, 400, {error:'Invalid state'});
       save.run(JSON.stringify(data)); return json(res, 200, {ok:true});
     }
-    if (req.method === 'GET' && path === '/api/config') return json(res,200,{whisper:Boolean(process.env.WHISPER_MODEL),kokoro:Boolean(process.env.KOKORO_URL),cli:process.env.QUORUM_ENABLE_CLI==='1'});
+    if (req.method === 'GET' && path === '/api/config') {
+      const cli = process.env.QUORUM_ENABLE_CLI === '1';
+      return json(res,200,{whisper:Boolean(process.env.WHISPER_MODEL),kokoro:Boolean(process.env.KOKORO_URL),cli,claude:cli ? await claudeStatus() : null});
+    }
     if (req.method === 'POST' && path === '/api/turn') {
       if (activeTurn) return json(res, 409, {error:'Another model turn is still running. Try again shortly.'});
       const data = await parseJSON(req);
