@@ -19,7 +19,7 @@ import {
 } from "../src/workspace.ts";
 
 const POLICY =
-  "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:";
+  "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:; frame-ancestors 'self'";
 
 /** A workspace in a temporary folder, with a folder outside it that must stay untouched. */
 async function sandbox(t: test.TestContext) {

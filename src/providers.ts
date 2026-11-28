@@ -2,7 +2,13 @@ import { spawn } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { canCreateFiles, MAX_FILE_REPLY_CHARS, MAX_REPLY_CHARS } from "./engine.ts";
+import {
+  canCreateFiles,
+  MAX_FILE_REPLY_CHARS,
+  MAX_REPLY_CHARS,
+  redactKeys,
+  withoutKeys,
+} from "./engine.ts";
 import type { Agent, MeetingContext, Prompt } from "./engine.ts";
 
 // Output room for a spoken turn, and for one that carries whole files.
@@ -158,17 +164,20 @@ function endpoint(base: string, path: string) {
 export async function respond(
   agent: Pick<Agent, "name" | "provider" | "model" | "category" | "files"> &
     Partial<Pick<Agent, "skills">>,
-  prompt: Prompt,
+  request: Prompt,
   signal?: AbortSignal,
   { attempt = 0 }: { attempt?: number } = {},
 ): Promise<string> {
+  // The last stop before a model: no GitHub key goes further.
+  const prompt = withoutKeys(request);
   const messages = [
     { role: "system", content: prompt.system },
     { role: "user", content: prompt.user },
   ];
-  // Only an agent that creates files gets the room to write them.
+  // Only an agent that creates files, or a long document, gets the room to write.
   const writes = canCreateFiles(agent);
-  const tokens = writes ? FILE_TOKENS : TURN_TOKENS;
+  const roomy = writes || Boolean(prompt.long);
+  const tokens = roomy ? FILE_TOKENS : TURN_TOKENS;
   let answer: unknown;
   switch (agent.provider) {
     case "demo": {
@@ -189,10 +198,10 @@ export async function respond(
           options: {
             num_predict: tokens,
             // The default window can cut off the instructions of a long meeting.
-            num_ctx: writes || prompt.hasFiles ? localWindow(prompt, tokens) : LOCAL_WINDOW,
+            num_ctx: roomy || prompt.hasFiles ? localWindow(prompt, tokens) : LOCAL_WINDOW,
             temperature: 0.8 + attempt * 0.2,
             // Code repeats itself by nature, so a strong penalty would damage files.
-            repeat_penalty: writes ? 1.05 : 1.15,
+            repeat_penalty: roomy ? 1.05 : 1.15,
             repeat_last_n: 512,
           },
         },
@@ -213,7 +222,7 @@ export async function respond(
           max_tokens: tokens,
           stream: false,
           temperature: 0.8 + attempt * 0.2,
-          frequency_penalty: writes ? 0 : 0.5,
+          frequency_penalty: roomy ? 0 : 0.5,
         },
         signal,
         process.env.QUORUM_OPENAI_KEY,
@@ -226,7 +235,7 @@ export async function respond(
       if (process.env.QUORUM_CLI_BRIDGE_URL) {
         const result = (await requestJSON(
           endpoint(process.env.QUORUM_CLI_BRIDGE_URL, "/respond"),
-          { agent, prompt },
+          { agent: withoutKeys(agent), prompt },
           signal,
           process.env.QUORUM_CLI_BRIDGE_TOKEN,
         ).catch((error) => {
@@ -296,5 +305,5 @@ export async function respond(
   }
   if (typeof answer !== "string" || !answer.trim())
     throw new Error("The model returned no text");
-  return answer.trim().slice(0, writes ? MAX_FILE_REPLY_CHARS : MAX_REPLY_CHARS);
+  return redactKeys(answer.trim()).slice(0, roomy ? MAX_FILE_REPLY_CHARS : MAX_REPLY_CHARS);
 }

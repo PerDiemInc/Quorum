@@ -4,7 +4,14 @@ import { lstat, mkdir, open, readdir, realpath, rename, rm, writeFile } from "no
 import type { Stats } from "node:fs";
 import { homedir } from "node:os";
 import { join, posix, relative, resolve, sep } from "node:path";
-import { MAX_FILE_BYTES, MAX_FILES, safeFilePath, safeSegment } from "./engine.ts";
+import {
+  hasKey,
+  isPreviewable,
+  MAX_FILE_BYTES,
+  MAX_FILES,
+  safeFilePath,
+  safeSegment,
+} from "./engine.ts";
 import type { ProjectFile } from "./engine.ts";
 
 /**
@@ -185,6 +192,11 @@ export async function saveToWorkspace(request: {
   if (!safeSegment(folder))
     throw fail("Choose a folder name without slashes that does not start with a dot.");
   const files = checkFiles(request.files);
+  const secret = files.find((f) => hasKey(f.path + "\n" + f.content));
+  if (hasKey(folder) || secret)
+    throw fail(
+      (secret?.path ?? "The folder name") + " contains a GitHub key, so nothing was saved. Remove the key first.",
+    );
   const overwrite = request.overwrite === true;
   await mkdir(workspaceRoot(), { recursive: true, mode: 0o700 });
   const root = await realpath(workspaceRoot());
@@ -236,43 +248,68 @@ export async function saveToWorkspace(request: {
   };
 }
 
-const isPreviewable = (path: string) => /\.(html|svg)$/i.test(path);
-
-/** Sent with every preview: no scripts, no requests, and no access to the app. */
+/** Sent with every preview: no scripts, no requests, no access to the app, and no
+ * framing by another site. */
 export const PREVIEW_HEADERS: Readonly<Record<string, string>> = {
   "content-security-policy":
-    "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:",
+    "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:; frame-ancestors 'self'",
   "x-content-type-options": "nosniff",
   "cross-origin-resource-policy": "same-origin",
   // The policy above does not stop a browser looking up a linked host name early.
   "x-dns-prefetch-control": "off",
 };
 
-/** A saved HTML or SVG file, from the encoded part of a /preview/ address. */
-export async function readPreview(address: string) {
-  let parts: string[] = [];
+/** The path a preview address names, or null. */
+export function addressPath(parts: string[]) {
+  let decoded: string[];
   try {
-    parts = address.split("/").map(decodeURIComponent);
+    decoded = parts.map(decodeURIComponent);
   } catch {
-    /* A malformed address names nothing. */
+    // A malformed address names nothing.
+    return null;
   }
   // A decoded slash would let one part smuggle in a path.
-  const path = parts.some((part) => part.includes("/")) ? null : workspacePath(parts.join("/"));
+  return decoded.some((part) => part.includes("/")) ? null : workspacePath(decoded.join("/"));
+}
+
+/** A saved HTML or SVG file, from the encoded part of a /preview/ address. */
+export async function readPreview(address: string) {
+  const path = addressPath(address.split("/"));
   if (!path || !isPreviewable(path))
     throw fail("Only saved HTML and SVG files can be previewed.", 404);
   const root = await existingRoot();
   if (!root) throw fail("There is no file at " + path + ".", 404);
-  const content = await readText(root, path);
+  return renderPreview(path, await readText(root, path), (sheet) => readText(root, sheet));
+}
+
+/** Reads a stylesheet that sits beside a previewed page, or throws. */
+type ReadSheet = (path: string) => string | Promise<string>;
+
+/** An HTML or SVG file as a preview serves it, wherever the file is kept. */
+export async function renderPreview(path: string, content: string, read: ReadSheet) {
   return /\.svg$/i.test(path)
-    ? { type: "image/svg+xml; charset=utf-8", content }
-    : { type: "text/html; charset=utf-8", content: await inlineStyles(root, path, content) };
+    ? { type: "image/svg+xml; charset=utf-8", content: disarm(content) }
+    : { type: "text/html; charset=utf-8", content: disarm(await inlineStyles(path, content, read)) };
 }
 
 /**
- * The preview policy blocks every request, so put the workspace stylesheets a page links
+ * The policy cannot stop every connection hint or redirect a page may ask for, so whatever
+ * link elements are left, however they are written, and any http-equiv are made inert.
+ */
+function disarm(markup: string) {
+  return markup
+    // With or without a namespace prefix, which XML allows.
+    .replace(/<((?:[^\s<>/"'=!?]+:)?)link(?=[\s/>])/gi, "<$1x-link")
+    .replace(/\bhttp-equiv(?=\s*=)/gi, "data-http-equiv")
+    // An XML entity could spell either of them out only after these checks.
+    .replace(/<!ENTITY/gi, "<!x-entity");
+}
+
+/**
+ * The preview policy blocks every request, so put the neighbouring stylesheets a page links
  * to into the page. Other link elements are removed, so none can hint at a connection.
  */
-async function inlineStyles(root: string, page: string, html: string) {
+async function inlineStyles(page: string, html: string, read: ReadSheet) {
   const styles = new Map<string, string>();
   for (const [tag] of html.matchAll(/<link\b[^<>]*>/gi)) {
     if (styles.size >= MAX_STYLESHEETS || styles.has(tag)) continue;
@@ -295,7 +332,7 @@ async function inlineStyles(root: string, page: string, html: string) {
           (media && /^[\w\s(),:.-]+$/.test(media) ? ' media="' + media + '"' : "") +
           ">\n" +
           // Text inside the sheet must not end the element early.
-          (await readText(root, path)).replace(/<\/(style)/gi, "<\\/$1") +
+          (await read(path)).replace(/<\/(style)/gi, "<\\/$1") +
           "\n</style>",
       );
     } catch {

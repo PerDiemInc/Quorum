@@ -6,7 +6,13 @@ import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
-import { canCreateFiles, normalizeAgent } from "./engine.ts";
+import {
+  canCreateFiles,
+  isProvider,
+  normalizeAgent,
+  redactKeys,
+  withoutKeys,
+} from "./engine.ts";
 import type { State } from "./engine.ts";
 import { freshTurn } from "./turn.ts";
 import type { TurnMeeting } from "./turn.ts";
@@ -17,7 +23,7 @@ import {
   chooseModel,
   claudeStatus,
 } from "./models.ts";
-import { addStarterAgents } from "./agent-templates.ts";
+import { addProductTeam, addStarterAgents } from "./agent-templates.ts";
 import {
   listLocal,
   readLocal,
@@ -34,6 +40,9 @@ import {
   PREVIEW_HEADERS,
 } from "./workspace.ts";
 import { githubStatus, commitToGitHub, readGitHubFile } from "./github.ts";
+import { addDraft, readDraft } from "./drafts.ts";
+import { autoCommit, listRepository, readRepository } from "./branch.ts";
+import { writeHandoff } from "./handoff.ts";
 
 const port = Number(process.env.PORT ?? 4710);
 if (!Number.isInteger(port) || port < 1 || port > 65535)
@@ -42,6 +51,8 @@ const root = fileURLToPath(new URL("../public/", import.meta.url));
 const dataDir = resolve(process.env.QUORUM_DATA ?? ".quorum");
 mkdirSync(dataDir, { recursive: true, mode: 0o700 });
 const db = new DatabaseSync(join(dataDir, "quorum.sqlite"));
+// Replaced rows are overwritten, so a removed key does not linger in the file.
+db.exec("PRAGMA secure_delete = ON");
 db.exec(
   "CREATE TABLE IF NOT EXISTS state (id INTEGER PRIMARY KEY CHECK(id=1), value TEXT NOT NULL)",
 );
@@ -58,6 +69,10 @@ const assets = new Map<string, [file: string, type: string]>([
   ["/import.js", ["import.ts", "text/javascript; charset=utf-8"]],
   ["/mentions.js", ["mentions.ts", "text/javascript; charset=utf-8"]],
   ["/files.js", ["files.ts", "text/javascript; charset=utf-8"]],
+  ["/preview.js", ["preview.ts", "text/javascript; charset=utf-8"]],
+  ["/next.js", ["next.ts", "text/javascript; charset=utf-8"]],
+  ["/key.js", ["key.ts", "text/javascript; charset=utf-8"]],
+  ["/repository.js", ["repository.ts", "text/javascript; charset=utf-8"]],
 ]);
 // Docker listens on its network interface; the published port stays loopback-only.
 const host: string = process.env.QUORUM_HOST ?? "127.0.0.1";
@@ -71,9 +86,15 @@ const hosts = new Set(
 );
 /** The saved workspace as JSON, or undefined before the first save. */
 const storedState = () => select.get()?.value as string | undefined;
+/** The only way the workspace is written, so no GitHub key is ever kept in it. */
+const storeState = (state: unknown) => save.run(redactKeys(JSON.stringify(state)));
+// A workspace saved before keys were removed on the way in is cleaned once.
+const earlier = storedState();
+if (earlier && redactKeys(earlier) !== earlier) save.run(redactKeys(earlier));
 function json(res: ServerResponse, status: number, data: unknown) {
   res.writeHead(status, { "content-type": "application/json; charset=utf-8" });
-  res.end(JSON.stringify(data));
+  // No answer, an error included, repeats a GitHub key.
+  res.end(redactKeys(JSON.stringify(data)));
 }
 async function body(req: IncomingMessage, limit: number) {
   const parts: Buffer[] = [];
@@ -159,7 +180,7 @@ const server = createServer(async (req, res) => {
             "This workspace changed in another tab. Reload before editing to preserve the latest agents and meetings.",
         });
       data._revision = version + 1;
-      save.run(JSON.stringify(data));
+      storeState(data);
       return json(res, 200, { ok: true, revision: data._revision });
     }
     if (req.method === "POST" && path === "/api/agents/starter-team") {
@@ -169,8 +190,20 @@ const server = createServer(async (req, res) => {
       const added = addStarterAgents(state);
       state.initialized = true;
       state._revision = (state._revision ?? 0) + 1;
-      save.run(JSON.stringify(state));
+      storeState(state);
       return json(res, 200, { state, added });
+    }
+    if (req.method === "POST" && path === "/api/agents/product-team") {
+      const data = (await parseJSON(req, 1000)) as { provider?: unknown } | null;
+      const provider = String(data?.provider ?? "");
+      const state = JSON.parse(
+        storedState() ?? '{"agents":[],"meetings":[]}',
+      ) as State;
+      const result = addProductTeam(state, isProvider(provider) ? provider : undefined);
+      state.initialized = true;
+      state._revision = (state._revision ?? 0) + 1;
+      storeState(state);
+      return json(res, 200, { state, ...result });
     }
     if (req.method === "GET" && path === "/api/import/library")
       return json(res, 200, await listLibrary());
@@ -205,13 +238,20 @@ const server = createServer(async (req, res) => {
       const data = await parseJSON(req, FILES_REQUEST_LIMIT);
       return json(res, 200, await saveToWorkspace(Object(data)));
     }
-    if (req.method === "GET" && path.startsWith("/preview/")) {
+    // Saved files and drafts held in memory are shown under the same restrictions.
+    const preview = /^\/(preview|draft)\/(.*)$/.exec(path);
+    if (req.method === "GET" && preview) {
       // Set first, so a refusal is just as isolated as a page.
       for (const [name, value] of Object.entries(PREVIEW_HEADERS)) res.setHeader(name, value);
-      const { type, content } = await readPreview(path.slice("/preview/".length));
+      const read = preview[1] === "draft" ? readDraft : readPreview;
+      const { type, content } = await read(preview[2]);
       res.writeHead(200, { "content-type": type });
       res.end(content);
       return;
+    }
+    if (req.method === "POST" && path === "/api/draft") {
+      const data = await parseJSON(req, FILES_REQUEST_LIMIT);
+      return json(res, 200, addDraft(Object(data)));
     }
     if (req.method === "GET" && path === "/api/github")
       return json(res, 200, githubStatus());
@@ -219,6 +259,19 @@ const server = createServer(async (req, res) => {
       const data = await parseJSON(req, FILES_REQUEST_LIMIT);
       // Not tied to the page: leaving halfway could strand a branch without its pull request.
       return json(res, 200, await commitToGitHub(Object(data), AbortSignal.timeout(60_000)));
+    }
+    if (req.method === "POST" && path === "/api/github/auto-commit") {
+      const data = await parseJSON(req, FILES_REQUEST_LIMIT);
+      // Not tied to the page, for the same reason as a push.
+      return json(res, 200, await autoCommit(Object(data), AbortSignal.timeout(60_000)));
+    }
+    if (req.method === "POST" && path === "/api/github/tree") {
+      const data = await parseJSON(req, 10_000);
+      return json(res, 200, await listRepository(Object(data), signal));
+    }
+    if (req.method === "POST" && path === "/api/github/read") {
+      const data = await parseJSON(req, 20_000);
+      return json(res, 200, await readRepository(Object(data), signal));
     }
     if (req.method === "POST" && path === "/api/github/file") {
       const data = (await parseJSON(req, 2000)) as { url?: unknown } | null;
@@ -240,12 +293,13 @@ const server = createServer(async (req, res) => {
       });
     if (req.method === "GET" && path === "/api/claude")
       return json(res, 200, await claudeStatus());
-    if (req.method === "POST" && path === "/api/turn") {
+    if (req.method === "POST" && (path === "/api/turn" || path === "/api/prompt")) {
       if (activeTurn)
         return json(res, 409, {
           error: "Another model turn is still running. Try again shortly.",
         });
-      const data = (await parseJSON(req, FILES_REQUEST_LIMIT)) as {
+      // Keys are replaced before anything is built from the request.
+      const data = withoutKeys(await parseJSON(req, FILES_REQUEST_LIMIT)) as {
         agent?: unknown;
         meeting?: Partial<TurnMeeting>;
       };
@@ -260,14 +314,16 @@ const server = createServer(async (req, res) => {
         return json(res, 409, { error: "Another model turn is running" });
       activeTurn = true;
       try {
-        // Writing whole files takes longer than a spoken turn.
-        const turn = canCreateFiles(agent)
+        const writing = path === "/api/prompt";
+        // Writing whole files or a long prompt takes longer than a spoken turn.
+        const turn = writing || canCreateFiles(agent)
           ? AbortSignal.any([abort.signal, AbortSignal.timeout(290_000)])
           : signal;
         const model = await chooseModel(agent, turn);
         // The goal, transcript and participants were checked above.
         const meeting = data.meeting as TurnMeeting;
-        const result = await freshTurn({ ...agent, model }, meeting, turn);
+        const answer = writing ? writeHandoff : freshTurn;
+        const result = await answer({ ...agent, model }, meeting, turn);
         if (!abort.signal.aborted)
           return json(res, 200, { ...result, model });
       } finally {
@@ -289,7 +345,7 @@ const server = createServer(async (req, res) => {
         voice?: unknown;
       };
       const audio = await synthesize(
-        String(data.text ?? "").slice(0, 16000),
+        redactKeys(String(data.text ?? "")).slice(0, 16000),
         String(data.voice ?? "").slice(0, 100),
         signal,
       );
@@ -299,12 +355,21 @@ const server = createServer(async (req, res) => {
     }
     return json(res, 404, { error: "Not found" });
   } catch (error) {
-    const err = error as Error & { status?: number; conflicts?: string[] };
+    const err = error as Error & {
+      status?: number;
+      conflicts?: string[];
+      keyRejected?: boolean;
+      directRefused?: boolean;
+    };
     if (!res.destroyed && !res.headersSent)
       json(res, err.status ?? 400, {
         error: err.message || "Request failed",
         // Files a save would replace, so the page can ask first.
         ...(err.conflicts ? { conflicts: err.conflicts } : {}),
+        // Tells the page to forget an access key GitHub would not take.
+        ...(err.keyRejected ? { keyRejected: true } : {}),
+        // Lets the page offer a pull request instead; it never switches by itself.
+        ...(err.directRefused ? { directRefused: true } : {}),
       });
     else if (!res.destroyed) res.end();
   }

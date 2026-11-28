@@ -74,7 +74,7 @@ Typing a model name pins it. A pinned Ollama model that is no longer installed f
 
 ### Dashboard
 
-- **Meeting room:** set a goal, add an optional description and agenda, invite agents or reuse the last team, attach files, run or pause turns, add feedback, and accept the outcome yourself. **Add agent** brings another one in and **Remove** on a card drops one, at any point before acceptance, even mid-discussion. A newcomer sees the recent conversation and speaks when the rotation reaches it; a removed agent's unfinished reply is discarded and can be added back with the settings it had. Earlier messages and the agent library are kept. A meeting has between 1 and 12 agents. Agents can [propose files](#files-the-workspace-folder-and-github) for you to save or commit.
+- **Meeting room:** set a goal, add an optional description and agenda, invite agents, reuse the last team or invite the [product team](#speaking-order), attach files, run or pause turns, add feedback, and accept the outcome yourself. **Add agent** brings another one in and **Remove** on a card drops one, at any point before acceptance, even mid-discussion. A newcomer sees the recent conversation and takes its place in the [speaking order](#speaking-order); a removed agent's unfinished reply is discarded and can be added back with the settings it had. Earlier messages and the agent library are kept. A meeting has between 1 and 12 agents. Once the team has been round, Quorum asks [what next](#what-next-a-prompt-for-claude-or-build-it-here). Agents can [propose files](#files-the-workspace-folder-and-github) for you to save or push, or have [committed as they write](#committing-as-agents-write).
 - **Meeting history:** search by goal, description, agenda, or agent. Reopen a saved room to see its context, participant snapshots, and transcript.
 - **Agents:** create specialists, inspect instructions/skills/model/voice, delete from the library, or restore the most recently deleted agent. Existing meetings retain independent participant snapshots. Deleted agents are retained in SQLite for restoration.
 - **Settings:** list installed Ollama and compatible endpoint models, check provider access, and install an Ollama model by name. Downloads show progress and errors and survive page navigation. One download runs at a time. If the app restarts, run the pull again; Ollama reuses already downloaded layers. A healthy Ollama process does not imply that any model has been pulled.
@@ -140,7 +140,7 @@ QUORUM_URL=http://127.0.0.1:4710 npm run smoke
 docker run --rm -v "$PWD:/app:ro" -w /app node:24-alpine npm test
 ```
 
-The smoke test checks app health, origin rejection, model discovery, and an actual Ollama response without modifying agents or meetings. Automated tests cover download errors/concurrency, speech request formatting, Host/Origin restrictions, SQLite persistence across server restart, file extraction and path safety, preview isolation, and the GitHub flow against a mocked API.
+The smoke test checks app health, origin rejection, model discovery, and an actual Ollama response without modifying agents or meetings. Automated tests cover download errors/concurrency, speech request formatting, Host/Origin restrictions, SQLite persistence across server restart, speaking order and rounds, file extraction and path safety, preview isolation, the prompt for Claude, key removal, and pushing and committing against a mocked GitHub API.
 
 ## Run on this Mac with the Docker model services
 
@@ -173,11 +173,30 @@ Node.js 24+ is required (built-in SQLite); running the app needs no npm dependen
 - **Claude Code / Codex:** install and authenticate the respective CLI yourself, then start with `QUORUM_ENABLE_CLI=1 npm start`. Leave the model blank for the automatic choice, or type a supported model name. These clients usually use cloud inference, not offline inference. Claude receives an empty tool list and empty MCP configuration; Codex uses its read-only sandbox. These settings are not a complete isolation boundary: installed CLI configuration, integrations and read access may still apply. Enable only for trusted agents and skills.
 - **Other endpoints:** an OpenAI-compatible provider can use a deliberately configured remote URL and optional `QUORUM_OPENAI_KEY`. This sends conversation and assigned instructions to that service.
 
+## Speaking order
+
+Agents speak by stage, then start again: **Product → UI/UX design → Engineering → Security → other specialists → Project manager**. A stage comes from the agent's name, with the most specific role first: a Project Manager is the project manager, a Product Designer is design, a Security Engineer is security, and QA, Business Developer and anyone unrelated are other specialists. For a name that says nothing, a group such as "Security" or "Design" decides; the built-in groups do not. Agents of one stage keep the order they joined in.
+
+Each card in the room shows the agent's position and stage, and who speaks next. Every agent is told the order, builds on the stage before it, and has a short brief: product covers the user, problem, scope and acceptance criteria; design the interface and design files; engineering the plan and code; security the risks and their fixes; the project manager decisions, owners, next steps and whether it is ready to build. An agent added mid-meeting speaks next if its place falls between the last speaker and the next one. Meetings from earlier versions that are not accepted are put in this order once, without changing whose turn it is.
+
+**Invite the product team** on the new-meeting form selects one agent for each of the five stages. It uses your agents first (demo agents do not count) and adds the built-in Product Manager, Designer, Developer, CISO or Project Manager where you have none, on your connected provider.
+
+A **round** is complete when every stage in the room has spoken, ending with the last. Until you change **Turns per run**, a run ends where a round does: with five agents the default of 12 gives two rounds. A number you set is used exactly.
+
+## What next: a prompt for Claude, or build it here
+
+After a full round, a **What next?** card appears and stays available, with **Another round** and:
+
+- **Get a prompt for Claude.** The engineering agent's model (else the project manager's, else the first agent's) writes a self-contained prompt to paste into Claude or Claude Code: goal, context, decisions, requirements, design direction, constraints and security points, and acceptance criteria. Quorum itself appends the current version of every proposed file, whole, up to 200,000 characters; larger ones are only named. The writer sees up to the last 80 messages (36,000 characters) and 30,000 characters of files. **Copy** or **Download (.md)** it. It is kept with the meeting until you ask for it to be written again, and is also offered after acceptance.
+- **Build it here.** One pass: the designer sends design files, the engineer writes code to match, security reviews the files and sends corrections, and the project manager summarizes. The designer, engineer and security agents may create files during the pass even if **Can create files** is off by default for them; where you switched it off yourself, they reply in words and Quorum says so first. Pause stops the pass and **Continue build** resumes it. The result shows the latest files, a design preview, **Save to folder** and **Push to GitHub**. An accepted meeting does not change, so building is not offered there.
+
 ## Files, the workspace folder and GitHub
 
-Agents can propose files, such as an HTML and CSS design or source code, and you decide what happens to them. A proposed file appears as a card under the message, with its path, size and contents. Nothing is written until you press **Save to folder** or **Commit to GitHub**, which act on that message's files. Both still work after a meeting is accepted.
+Agents can propose files, such as an HTML and CSS design or source code. A proposed file appears as a card under the message, with its path, size and contents. Nothing leaves the meeting until you press **Save to folder** or **Push to GitHub**, which act on that message's files, or connect a repository for [automatic commits](#committing-as-agents-write). Both buttons still work after a meeting is accepted.
 
-**Who can create files.** **Can create files** is a switch in **Create an agent**, in an agent's details and in a participant's **Settings** in a meeting. Until you set it, it is on for agents in the Build group, for agents whose name contains Design, Engineer or Developer (which includes Business Developer), and for agents given a skill with "engineer" in its name. Those agents are asked to send whole files in blocks marked `file:relative/path.ext`, and to keep designs self-contained. They get room for longer replies, so their turns can take much longer and cost more. A small local model may not produce usable files.
+**Design previews.** A message or build result with an HTML or SVG file shows it live, styled by the proposed stylesheets, with **Open full size** and a phone or desktop width. Nothing is saved: the server holds the drafts in memory (at most 50, 20 MB) under random addresses. Scripts never run, nothing is loaded from the network, and images other than inline `data:` ones are missing.
+
+**Who can create files.** **Can create files** is a switch in **Create an agent**, in an agent's details and in a participant's **Settings** in a meeting. Until you set it, it is on for agents in the Build group, for agents whose name contains Design, Engineer or Developer (which includes Business Developer), and for agents given a skill with "engineer" in its name. A build pass also turns it on for its own steps unless you switched it off. Those agents are asked to send whole files in blocks marked `file:relative/path.ext`, and to keep designs self-contained. They get room for longer replies, so their turns can take much longer and cost more. A small local model may not produce usable files.
 
 **The workspace folder** is `~/quorum-workspace`, or `QUORUM_WORKSPACE`. **Save to folder** writes into a folder inside it, named after the meeting goal unless you change it, and asks before replacing a file. **Preview** opens a saved HTML or SVG file in a new tab with scripts off and the network blocked. Stylesheets in the workspace that a page links to are included; other linked files, including images, are not loaded.
 
@@ -185,9 +204,22 @@ In Docker the workspace is `/data/workspace` inside the `quorum-data` volume, no
 
 **Attach files** in a meeting adds text files from the workspace, or one file from a GitHub file address (`https://github.com/owner/repo/blob/branch/path`), for every agent to read. They show as chips you can remove, and their contents go to the agents' model providers. A public file needs no account; a private one needs `QUORUM_GITHUB_TOKEN`. Branch names containing `/` are not supported in these addresses.
 
-### Committing to GitHub
+### GitHub access keys
 
-Committing is **off by default**. Turn it on with one of these, then restart Quorum:
+Pushing and automatic commits need a key. Create a [fine-grained token](https://github.com/settings/personal-access-tokens/new) for **only the target repository**, with **Contents** and **Pull requests** set to read and write. Type it into the **GitHub access key** field in the push or connect window, or, when the chat asks for one, paste it into the message box and send it.
+
+How the key is handled:
+
+- It is kept only in the memory of the open page, never in browser storage, cookies, the meeting or the database. Reloading the page or **Forget key** removes it.
+- It is sent to your local Quorum server in the body of each request that talks to GitHub (push, commit, listing and reading the connected repository), used for that request, and not stored, logged, repeated in an answer or given to model processes. A key GitHub rejects is forgotten.
+- A GitHub key in anything you type as meeting text (messages, a new meeting's goal, description or agenda, agent instructions, voice transcripts) is taken out before it reaches the meeting, and held for the session. A key sent on its own asks no agent to reply. While the chat is asking, a single old-style 40-character key is recognized too.
+- As a second line of defense, the server replaces anything shaped like a GitHub key (`github_pat_…`, `ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_`) with `[GitHub key removed]` in saved state, including state saved by earlier versions, in model prompts and replies, and in every answer. Files containing one are refused for saving, pushing and committing rather than altered. Other kinds of secret are not detected.
+
+### Pushing to GitHub
+
+**Push to GitHub** shows the files, then creates a new branch named `quorum/<message>-<time>` from the default branch, with one commit, and opens a pull request. It never updates an existing branch. If the pull request cannot be opened, the message names the branch that was left behind. The repository needs at least one commit, and Quorum does not fork: you need write access.
+
+Instead of entering a key, you can start Quorum with a credential of its own; the key field is then optional, and a key you enter takes precedence:
 
 ```bash
 # A fine-grained token limited to the repository, with Contents and Pull requests: read and write.
@@ -196,7 +228,7 @@ QUORUM_GITHUB_TOKEN=github_pat_... QUORUM_GITHUB_WRITE=1 QUORUM_GITHUB_REPOS=own
 QUORUM_GITHUB_CLI=1 npm run start:local
 ```
 
-A token on its own is only used to read, for private imports and attachments; committing also needs `QUORUM_GITHUB_WRITE=1`. The Compose file passes none of these variables to the container. To commit from Docker, put the token in `.env` and add a `compose.override.yaml`:
+A token on its own is only used to read, for private imports, attachments and the repository file list; writing with it also needs `QUORUM_GITHUB_WRITE=1`. The Compose file passes none of these variables to the container. To use one in Docker, put the token in `.env` and add a `compose.override.yaml`:
 
 ```yaml
 services:
@@ -207,19 +239,41 @@ services:
       QUORUM_GITHUB_REPOS: ${QUORUM_GITHUB_REPOS:-}
 ```
 
-A commit creates a new branch named `quorum/<message>-<time>` from the default branch, with one commit, and opens a pull request. Quorum never updates the default branch or any other existing branch. If the pull request cannot be opened, the message names the branch that was left behind. The repository needs at least one commit, and Quorum does not fork: you need write access.
-
 | Variable | Meaning |
 |---|---|
 | `QUORUM_WORKSPACE` | The workspace folder. Default `~/quorum-workspace`; `/data/workspace` in the Docker image. |
-| `QUORUM_GITHUB_TOKEN` | Reads private repositories for import and attach. Used to commit only with `QUORUM_GITHUB_WRITE=1` or `QUORUM_GITHUB_CLI=1`. |
-| `QUORUM_GITHUB_WRITE` | `1` lets the token commit. |
-| `QUORUM_GITHUB_CLI` | `1` turns committing on using `gh auth token`. `QUORUM_GITHUB_TOKEN` wins if both are set. |
-| `QUORUM_GITHUB_REPOS` | Optional comma-separated `owner/repo` list that commits are limited to. A list with no valid entry allows none. |
+| `QUORUM_GITHUB_TOKEN` | Reads private repositories for import and attach. Used to write only with `QUORUM_GITHUB_WRITE=1` or `QUORUM_GITHUB_CLI=1`. |
+| `QUORUM_GITHUB_WRITE` | `1` lets the token write. |
+| `QUORUM_GITHUB_CLI` | `1` turns writing on using `gh auth token`. `QUORUM_GITHUB_TOKEN` wins if both are set. |
+| `QUORUM_GITHUB_REPOS` | Optional comma-separated `owner/repo` list that pushes, commits and repository connections are limited to, whichever key is used. A list with no valid entry allows none. |
+
+### Committing as agents write
+
+**Connect repository**, under the conversation, connects one meeting to one repository; the chat offers it when agents first write code. Connecting is your consent: with **Commit agents' code automatically** on (the default when you connect), files already proposed are committed, and then each reply that adds or changes files is committed at once, during a build too, **without you reviewing it first**. The repository name and the switch are saved with the meeting; the key is not. After a reload the chat asks for the key again and offers to commit what is waiting. **Disconnect** stops everything.
+
+- By default commits go to one branch for the meeting, `quorum/<goal>-<id>`. The first creates it from the default branch and opens a pull request; later ones step it forward from its current head, without force. Quorum writes no other existing branch, and the default branch only if you choose [direct commits](#committing-straight-to-the-default-branch). If the branch was deleted, or its pull request merged or closed, a new branch is started and the chat says so; files committed earlier are not repeated on it.
+- A file that already exists is replaced only if the meeting has seen its current contents: you attached them from that repository before the agent wrote its version, or Quorum wrote them. Otherwise it is held back. **Attach current version** gives it to the agents so they can redo the change, **Replace it** approves replacing it, and **Leave it** drops it. **Attach from repository** picks files for agents to work on in the first place.
+- Unchanged files make no commit. Nothing is deleted or renamed, and a file is never written over a folder, link or submodule. The commit message names the agent and what changed.
+- Files from an agent that was not allowed to create files, and files in your own messages, are not committed.
+- A failed commit keeps the files, shows why and offers **Retry**; the meeting carries on.
+
+### Committing straight to the default branch
+
+**Off unless you turn it on.** Under **Where commits go**, choose **Directly to** the default branch (in the connect window or on the connected meeting), then confirm the repository and branch it names.
+
+**The risk, plainly:** nobody reviews these commits. Whatever agents write is live on that branch immediately. Workflows and deployments that run on the branch will run, with their secrets, and in a public repository the files are public at once. There is no pull request to close; undoing a commit is up to you, in Git.
+
+- It always needs an access key entered in the page, even when Quorum was started with a GitHub credential, so another program on your computer cannot use that credential to write the default branch.
+- It applies to one meeting and one repository. Disconnecting or connecting again returns to the pull request, and only your own clicks can turn it on: nothing an agent, attached file or imported skill says can. A red banner stays in view while it is on, and **Use a pull request** turns it off.
+- The server writes the default branch only for a request that says so and names it, and only while that name is still the repository's default. Commits are never forced. If the branch moved in the meantime, the files are compared again and the commit tried once more.
+- Everything else is unchanged: files the meeting has not seen are held back, and the path, size, repository and key checks apply. Nothing is deleted or renamed.
+- If branch protection or repository rules refuse the commit, Quorum says so and offers **Use a pull request instead**. It never switches by itself.
+- Each commit is noted in the chat as going straight to the branch, with its link. Switching destination does not commit earlier files again.
 
 ### Limits
 
-- Saving, committing and attaching take at most 20 files of 200 KB each. Attached files can total 60,000 characters in a meeting.
+- Saving, pushing, committing and attaching take at most 20 files of 200 KB each; automatic commits split a larger set. Attached files can total 60,000 characters in a meeting.
+- The repository file list shows up to 500 text files.
 - File paths are relative, up to 200 characters and 8 levels, with no `..`, backslashes, or names starting with a dot (so no `.git`, `.env` or `.github`), and no `node_modules`. Types: html, css, js, mjs, ts, tsx, jsx, json, md, txt, py, sql, svg, yaml, yml, toml, go, rs, java, kt, swift, rb, sh. Files without one of these extensions, such as `Dockerfile` or images, cannot be saved or committed.
 - Models see up to 60,000 characters of file contents per turn: the latest version of each proposed file, and the attachments. A file that does not fit is named without its contents.
 - A reply with files can be 120,000 characters. Ollama and OpenAI-compatible agents are allowed 8,000 output tokens and a turn 290 seconds; a file cut off by a limit is shown but cannot be saved. Ollama's context window grows up to 32,768 tokens for these turns, which needs more memory. The optional `--profile hf` server has a 4,096-token context, too small for file work unless you raise `--ctx-size`. An endpoint that rejects 8,000 tokens needs the switch turned off.
@@ -228,13 +282,15 @@ A commit creates a new branch named `quorum/<message>-<time>` from the default b
 
 ### Security model
 
-- **Agents get no tools, shell or write access from Quorum.** A model returns text. Files are read out of that text, and you approve every save and every commit.
-- **Treat proposed files as untrusted.** Imported skills, attached files and earlier messages can all steer what an agent writes. Read each file before using it. Saving runs nothing, but running a saved file does. A pull request branch in your own repository can trigger its existing workflows, with their secrets, before you merge: for example through a changed `package.json` script.
+- **Agents get no tools, shell or write access from Quorum.** A model returns text. Files are read out of that text. You approve every save and push, and nothing is committed unless you connected a repository.
+- **Direct commits remove the last review too.** With [committing straight to the default branch](#committing-straight-to-the-default-branch) on, model output changes that branch, and whatever it deploys, with no person in between. Leave it off for anything you cannot afford to have broken or exposed. Branch protection on GitHub is the control that holds even if this machine or a model misbehaves.
+- **Automatic commits remove the per-file review.** With them on, whatever a model writes (within the path, size and key checks) reaches a branch and a pull request in your repository as soon as it is written. Imported skills, attached files, repository contents and earlier messages can all steer it. The repository's workflows may run on those commits, with their secrets, before you have read them: for example through a changed `package.json` script or any other code a workflow executes. Quorum cannot write workflow files (no path may start with a dot), but it can change what existing workflows run. Connect a repository where that is acceptable, protect secrets from `quorum/` branches and pull requests, and read the pull request before merging.
+- **Treat proposed files as untrusted.** Read each file before using it. Saving runs nothing, but running a saved file does. A pushed branch can trigger workflows in the same way.
 - **Paths** are checked on the server. Writes stay inside the workspace folder, symbolic links below it are refused, and existing files are replaced only after you confirm. The folder itself may be a link, since you choose it.
-- **Previews** are sent with a sandboxing Content-Security-Policy, so a page cannot run scripts, make requests or reach Quorum. A link you click in a preview can still leave for another site.
-- **GitHub credentials** stay in the server: they are not sent to the browser, written to logs or errors, or passed to the Claude and Codex processes. Commits go only to `api.github.com`.
+- **Previews** of saved files and drafts are sent with a sandboxing Content-Security-Policy, and only Quorum can frame them, so a page cannot run scripts, make requests or reach Quorum. Link elements and refresh tags are disabled. Inside Quorum, a link in a preview cannot leave; in a preview opened in its own tab, a link you click can still lead to another site.
+- **GitHub credentials**: a credential Quorum was started with stays in the server and is not sent to the browser. A [key you enter](#github-access-keys) stays in the page. Neither is written to logs or errors or passed to the Claude and Codex processes. Writes go only to `api.github.com`.
 - **Codex is the exception.** Its read-only sandbox can read files on your computer, which may include saved credentials. Do not give untrusted instructions to a Codex agent.
-- **The local API has no login.** The Host and same-origin checks stop other websites, not other programs on this computer: while committing is on, any of them could use it. Limit the token and `QUORUM_GITHUB_REPOS`, and turn it off when you are done.
+- **The local API has no login.** The Host and same-origin checks stop other websites, not other programs on this computer: while Quorum holds a credential of its own, any of them could use it to push branches. It cannot use that credential to commit straight to a default branch, which needs the key entered in the page. Limit the token and `QUORUM_GITHUB_REPOS`, and turn it off when you are done. A key you enter is not held by the server, but it does pass through it, over unencrypted loopback HTTP.
 
 ## Importing agents and skills
 
@@ -246,11 +302,11 @@ A commit creates a new branch named `quorum/<message>-<time>` from the default b
 - **Skills** are `SKILL.md` files, added to the agent you choose.
 - **Claude on this computer** lists `~/.claude/agents`, `~/.claude/skills` and `~/.claude/plugins` (override with `CLAUDE_AGENTS_DIR` and `CLAUDE_SKILLS_DIR`). A Docker install cannot see your home folder, so run natively for this.
 
-Public repositories need no account; set `QUORUM_GITHUB_TOKEN` for private ones or for a higher request limit. A read-only token is enough for importing; [committing](#committing-to-github) is switched on separately. Only Markdown text is imported, up to 32,000 characters per file; scripts and linked files are not, and agents cannot run tools. Imported text becomes an agent's instructions and is sent to its model provider, so import only what you trust. Codex can read local files from its sandbox, so be especially careful with unfamiliar files on Codex agents. Long instructions can overflow a small local model's context.
+Public repositories need no account; set `QUORUM_GITHUB_TOKEN` for private ones or for a higher request limit. A read-only token is enough for importing; [writing](#pushing-to-github) is switched on separately. Only Markdown text is imported, up to 32,000 characters per file; scripts and linked files are not, and agents cannot run tools. Imported text becomes an agent's instructions and is sent to its model provider, so import only what you trust. Codex can read local files from its sandbox, so be especially careful with unfamiliar files on Codex agents. Long instructions can overflow a small local model's context.
 
 ## Tagging and repetition
 
-Type `@` in the message box to tag an agent in the meeting: arrows choose, **Enter** or **Tab** insert, and **Tag @** on an agent's card does the same. When you send a message with tags, those agents answer it in the order tagged and the discussion then pauses; the rotation resumes where it left off.
+Type `@` in the message box to tag an agent in the meeting: arrows choose, **Enter** or **Tab** insert, and **Tag @** on an agent's card does the same. When you send a message with tags, those agents answer it in the order tagged and the discussion then pauses; the [rotation](#speaking-order) resumes where it left off.
 
 A reply that mostly repeats what an agent already said is refused and requested again, up to three times, then that turn is skipped. When every agent in the room has been skipped in a row, the discussion stops and asks you for direction. Near-identical earlier messages are also left out of what models are shown. The check compares wording, so a reply that makes the same point in new words can still get through, and small local models repeat more than larger ones.
 

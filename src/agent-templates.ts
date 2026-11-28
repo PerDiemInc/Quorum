@@ -1,5 +1,6 @@
-import { normalizeAgent } from "./engine.ts";
-import type { Agent, State } from "./engine.ts";
+import { randomUUID } from "node:crypto";
+import { normalizeAgent, pickForStage, teamStages } from "./engine.ts";
+import type { Agent, Provider, Stage, State } from "./engine.ts";
 
 /** Curated meeting roles. Sources are references, never executable instructions. */
 export const starterAgents: Agent[] = [
@@ -464,4 +465,42 @@ export function addStarterAgents(state: Pick<State, "agents" | "deletedAgents">)
     ...missing.map((agent) => normalizeAgent(structuredClone(agent))),
   );
   return missing.length;
+}
+
+/** The built-in that fills each stage of the product team when the host has no agent for it. */
+const TEAM_ROLES: Readonly<Record<(typeof teamStages)[number], string>> = {
+  product: "quorum-role-product-manager",
+  design: "quorum-role-designer",
+  engineering: "quorum-role-developer",
+  security: "quorum-role-ciso",
+  project: "quorum-role-project-manager",
+};
+
+/** Choose one agent for each stage of the product team, creating the ones that are missing.
+ * The host's own agents are used first; demo placeholders never count, as they call no model.
+ * @param provider what new agents run on; without a connected one they keep the built-in's.
+ * @returns the chosen ids in speaking order, and the names of agents created
+ */
+export function addProductTeam(
+  state: Pick<State, "agents" | "deletedAgents">,
+  provider?: Provider,
+): { team: string[]; added: string[] } {
+  const added: string[] = [];
+  const team = teamStages.map((stage: Stage & keyof typeof TEAM_ROLES) => {
+    const usable = state.agents.filter((agent) => agent.provider !== "demo");
+    const found = pickForStage(usable, stage);
+    if (found) return found.id;
+    const template = structuredClone(starterAgents.find((a) => a.id === TEAM_ROLES[stage])!);
+    // An id in use, even by a deleted agent that could be restored, is not given twice.
+    if ([...state.agents, ...(state.deletedAgents ?? [])].some((a) => a.id === template.id))
+      template.id = randomUUID();
+    const names = new Set(state.agents.map((a) => a.name.toLowerCase()));
+    const base = template.name;
+    for (let n = 2; names.has(template.name.toLowerCase()); n++) template.name = base + " " + n;
+    if (provider && provider !== "demo") template.provider = provider;
+    state.agents.push(normalizeAgent(template));
+    added.push(template.name);
+    return template.id;
+  });
+  return { team, added };
 }

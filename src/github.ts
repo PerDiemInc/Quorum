@@ -1,4 +1,4 @@
-import { MAX_FILE_BYTES, slug } from "./engine.ts";
+import { hasKey, isAccessKey, KEY_REMOVED, MAX_FILE_BYTES, slug } from "./engine.ts";
 import type { Attachment } from "./engine.ts";
 import { parseGitHubURL } from "./import.ts";
 import { runProcess } from "./providers.ts";
@@ -7,13 +7,57 @@ import { checkFiles, decodeText } from "./workspace.ts";
 /**
  * Commits files the host approved to a new branch and opens a pull request. No existing
  * branch is ever updated: the only reference written is one that did not exist before.
- * Writing is off unless the person running Quorum turns it on, and the token stays here.
+ * Writing needs an access key the host enters for that push, or a credential the person
+ * running Quorum turned on. Either is used for the calls to GitHub and nothing else: it is
+ * not stored, logged or repeated in an answer.
  */
 const API = "https://api.github.com";
 const MAX_MESSAGE_CHARS = 5000;
 
 const fail = (message: string, status = 400) =>
   Object.assign(new Error(message), { status });
+/** An error whose message is safe to show, with the HTTP status to answer with. */
+export { fail };
+/** A failure that means the host's key should be forgotten and replaced. */
+const rejected = (message: string) => Object.assign(fail(message, 403), { keyRejected: true });
+
+// Anything shaped like a GitHub credential, whether or not it is the one in use.
+const KEY_SHAPE = /github_pat_[A-Za-z0-9_]+|gh[a-z]_[A-Za-z0-9_.-]{16,}/g;
+const redact = (text: string, token: string) =>
+  (token ? text.replaceAll(token, "[token]") : text).replace(KEY_SHAPE, "[token]");
+
+/** What a failure says beyond its message and status. */
+export interface Failure extends Error {
+  status?: number;
+  keyRejected?: boolean;
+  /** Set when the repository's rules refused a change to a branch. */
+  protected?: boolean;
+  /** Set when a commit straight to the default branch was refused. */
+  directRefused?: boolean;
+}
+
+/** Whatever failed, no credential leaves in the explanation. */
+export async function guarded<T>(key: string, work: () => Promise<T>) {
+  try {
+    return await work();
+  } catch (error) {
+    const cause = error as Failure;
+    throw Object.assign(
+      fail(redact(cause.message, key), cause.status ?? 502),
+      cause.keyRejected ? { keyRejected: true } : {},
+      cause.directRefused ? { directRefused: true } : {},
+    );
+  }
+}
+
+/** The key the host entered for this push, or "" when there is none. */
+export function suppliedKey(value: unknown) {
+  if (value === undefined || value === null || value === "") return "";
+  const key = typeof value === "string" ? value.trim() : "";
+  // The value is not quoted back: it may be a real credential with a stray character.
+  if (!isAccessKey(key)) throw rejected("That does not look like a GitHub access key.");
+  return key;
+}
 
 /** Repositories writing is limited to, or null for no limit. */
 function allowedRepositories(): string[] | null {
@@ -25,7 +69,7 @@ function allowedRepositories(): string[] | null {
 }
 
 /** Writing is a choice of its own: a token may have been set only to read private files. */
-function tokenSource() {
+export function tokenSource() {
   const cli = process.env.QUORUM_GITHUB_CLI === "1";
   if (!process.env.QUORUM_GITHUB_TOKEN) return cli ? "cli" : null;
   return cli || process.env.QUORUM_GITHUB_WRITE === "1" ? "token" : null;
@@ -38,7 +82,7 @@ export function githubStatus() {
 }
 
 /** Errors here must never carry the token or anything a command printed. */
-async function writeToken(signal?: AbortSignal) {
+export async function writeToken(signal?: AbortSignal) {
   const source = tokenSource();
   let token = process.env.QUORUM_GITHUB_TOKEN ?? "";
   if (source === "cli")
@@ -79,19 +123,21 @@ function checkMessage(value: unknown) {
   return message;
 }
 
-const encodePath = (path: string) => path.split("/").map(encodeURIComponent).join("/");
+export const encodePath = (path: string) => path.split("/").map(encodeURIComponent).join("/");
 
-/** Why GitHub refused, in terms the host can act on. */
-async function refusal(response: Response, token: string, repository: string) {
+/** Why GitHub refused, in terms the host can act on.
+ * @param own whether the credential is a key the host entered
+ */
+async function refusal(response: Response, token: string, repository: string, own: boolean) {
   const body = (await response.json().catch(() => null)) as {
     message?: unknown;
     errors?: Array<{ message?: unknown }>;
   } | null;
-  const detail = [body?.message, ...(Array.isArray(body?.errors) ? body.errors.map((e) => e?.message) : [])]
+  const answered = [body?.message, ...(Array.isArray(body?.errors) ? body.errors.map((e) => e?.message) : [])]
     .filter((text) => typeof text === "string")
-    .join(". ")
-    .replaceAll(token, "[token]")
-    .slice(0, 300);
+    .join(". ");
+  // Redacted before it is shortened, so no part of a credential survives the cut.
+  const detail = redact(answered, token).slice(0, 300);
   const said = detail ? " GitHub said: " + detail : "";
   const { status, headers } = response;
   if (
@@ -108,18 +154,25 @@ async function refusal(response: Response, token: string, repository: string) {
       429,
     );
   }
+  // The key is fine here; the repository does not allow this change.
+  if ([403, 409, 422].includes(status) && /protected branch|rule violation|status check|through a pull request/i.test(detail))
+    return Object.assign(fail("The rules of " + repository + " refused the change." + said, 409), {
+      protected: true,
+    });
   if (status === 401)
-    return fail("GitHub rejected the token. Check QUORUM_GITHUB_TOKEN or run gh auth login.", 403);
-  if (status === 403)
-    return fail(
+    return own
+      ? rejected("GitHub rejected the access key. Check that it is complete and has not expired.")
+      : fail("GitHub rejected the token. Check QUORUM_GITHUB_TOKEN or run gh auth login.", 403);
+  if (status === 403) {
+    const message =
       "No permission to write to " + repository +
-        ". The token needs Contents and Pull requests write access." + said,
-      403,
-    );
+      ". The " + (own ? "access key" : "token") + " needs Contents and Pull requests write access." + said;
+    return own ? rejected(message) : fail(message, 403);
+  }
   if (status === 404)
     return fail(
       "GitHub could not find " + repository +
-        ". Check the name, and that the token can see and write to it." + said,
+        ". Check the name, and that the " + (own ? "access key" : "token") + " can see and write to it." + said,
       404,
     );
   if (status >= 300 && status < 400)
@@ -129,13 +182,14 @@ async function refusal(response: Response, token: string, repository: string) {
   return fail("GitHub returned HTTP " + status + "." + said, 502);
 }
 
-/** One call to the GitHub REST API, which is the only place the token is sent. */
-function repositoryAPI(token: string, repository: string, signal?: AbortSignal) {
-  return async <T>(path: string, body?: object): Promise<T> => {
+/** One call to the GitHub REST API, which is the only place the token is sent. A call
+ * with a body creates something unless it names another method. */
+export function repositoryAPI(token: string, repository: string, signal?: AbortSignal, own = false) {
+  return async <T>(path: string, body?: object, method = body ? "POST" : "GET"): Promise<T> => {
     let response: Response;
     try {
       response = await fetch(API + "/repos/" + repository + path, {
-        method: body ? "POST" : "GET",
+        method,
         signal,
         // A redirect could point anywhere, including a repository that is not allowed.
         redirect: "manual",
@@ -154,7 +208,7 @@ function repositoryAPI(token: string, repository: string, signal?: AbortSignal) 
         ? fail("GitHub took too long to answer. Check the repository before trying again.", 504)
         : fail("GitHub could not be reached. Check your connection and try again.", 502);
     }
-    if (!response.ok) throw await refusal(response, token, repository);
+    if (!response.ok) throw await refusal(response, token, repository, own);
     return (await response.json().catch(() => {
       throw fail("GitHub sent an answer Quorum could not read.", 502);
     })) as T;
@@ -162,27 +216,51 @@ function repositoryAPI(token: string, repository: string, signal?: AbortSignal) 
 }
 
 /** An object id from GitHub, checked before it is used in an address or a request. */
-function objectId(value: unknown) {
+export function objectId(value: unknown) {
   if (typeof value !== "string" || !/^[0-9a-f]{40,64}$/.test(value))
     throw fail("GitHub sent an answer Quorum could not read.", 502);
   return value;
 }
 
+interface CommitRequest {
+  repo?: unknown;
+  message?: unknown;
+  files?: unknown;
+  /** An access key for this push only. */
+  key?: unknown;
+}
+
 /** Commit the files to a new quorum/ branch from the default branch and open a pull request. */
-export async function commitToGitHub(
-  request: { repo?: unknown; message?: unknown; files?: unknown },
-  signal?: AbortSignal,
-) {
-  if (!tokenSource())
+export async function commitToGitHub(request: CommitRequest, signal?: AbortSignal) {
+  const key = suppliedKey(request.key);
+  return guarded(key, () => pushBranch(request, key, signal));
+}
+
+async function pushBranch(request: CommitRequest, key: string, signal?: AbortSignal) {
+  if (!key && !tokenSource())
     throw fail(
-      "Committing to GitHub is off. Start Quorum with QUORUM_GITHUB_CLI=1, or with QUORUM_GITHUB_TOKEN and QUORUM_GITHUB_WRITE=1.",
+      "Committing to GitHub is off without an access key. Enter one, or start Quorum with QUORUM_GITHUB_CLI=1, or with QUORUM_GITHUB_TOKEN and QUORUM_GITHUB_WRITE=1.",
       403,
     );
+  // A key pasted into the wrong box must not be published with the files.
+  const typed = JSON.stringify([request.repo, request.message]);
+  if (hasKey(typed) || (key && JSON.stringify([typed, request.files]).includes(key)))
+    throw fail("A GitHub key appears in the repository name, message or files. Remove it before pushing.");
   const { owner, repo, name } = checkRepository(request.repo);
   const message = checkMessage(request.message);
   const files = checkFiles(request.files);
-  const token = await writeToken(signal);
-  const call = repositoryAPI(token, owner + "/" + repo, signal);
+  // Refused rather than changed: the host approved these exact contents.
+  const secret = files.find(
+    (f) => hasKey(f.path + "\n" + f.content) || f.content.includes(KEY_REMOVED),
+  );
+  if (secret)
+    throw fail(
+      secret.path + " contains a GitHub key, or had one removed from it. Quorum will not push it. " +
+        "Ask for the file without the key.",
+    );
+  // The host's key comes first: entering one is asking for it to be used.
+  const token = key || (await writeToken(signal));
+  const call = repositoryAPI(token, owner + "/" + repo, signal, Boolean(key));
 
   const { default_branch: base } = await call<{ default_branch?: unknown }>("");
   if (typeof base !== "string" || !base) throw fail("GitHub sent no default branch.", 502);
@@ -219,15 +297,18 @@ export async function commitToGitHub(
   try {
     pull = await call("/pulls", { title: title.slice(0, 200), head: branch, base, body: description });
   } catch (error) {
-    const cause = error as Error & { status?: number };
-    throw fail(
-      "The branch " + branch + " was created in " + name +
-        ", but the pull request could not be opened. " + cause.message,
-      cause.status,
+    const cause = error as Error & { status?: number; keyRejected?: boolean };
+    throw Object.assign(
+      fail(
+        "The branch " + branch + " was created in " + name +
+          ", but the pull request could not be opened. " + cause.message,
+        cause.status,
+      ),
+      cause.keyRejected ? { keyRejected: true } : {},
     );
   }
   const url = String(pull.html_url ?? "");
-  if (!url.startsWith("https://github.com/"))
+  if (!url.startsWith("https://github.com/") || redact(url, token) !== url)
     throw fail("The branch " + branch + " was created, but GitHub sent no pull request address.", 502);
   return { repo: name, branch, url, number: Number(pull.number) };
 }

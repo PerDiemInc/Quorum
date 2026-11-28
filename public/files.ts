@@ -1,5 +1,15 @@
-import { MAX_CONTEXT_FILE_CHARS, MAX_FILES, extractFiles, slug } from "/engine.js";
+import {
+  KEY_REMOVED,
+  MAX_CONTEXT_FILE_CHARS,
+  MAX_FILES,
+  extractFiles,
+  isAccessKey,
+  isPreviewable,
+  latestFiles,
+  slug,
+} from "/engine.js";
 import type { Attachment, FileBlock, Meeting, Message, ProjectFile } from "/engine.js";
+import { askForKey, closeKeyRequest, forgetKey, heldKey, holdKey, onKeyChange, scrub } from "/key.js";
 
 /** What the files dialogs need from the page. */
 export interface FilesApp {
@@ -11,6 +21,8 @@ export interface FilesApp {
   button: (text: string, fn: () => void, variant?: string) => HTMLButtonElement;
   checkbox: (input: HTMLInputElement, ...children: Node[]) => HTMLElement;
   chip: (text: string, tone?: string) => HTMLElement;
+  /** A live preview of one HTML or SVG file, styled by the files beside it. */
+  preview: (files: readonly ProjectFile[], page: ProjectFile) => HTMLElement;
   /** A refused save carries the paths that already exist. */
   request: <T>(path: string, method?: string, data?: object) => Promise<T>;
   /** The open meeting. */
@@ -27,7 +39,9 @@ interface Saved {
   files: Array<{ path: string; size: number; preview: boolean }>;
 }
 interface GitHubStatus {
+  /** Whether Quorum was started with a credential it may push with. */
   available: boolean;
+  source: "token" | "cli" | null;
   repos: string[] | null;
 }
 interface Committed {
@@ -51,8 +65,11 @@ interface Elements {
     readonly elements: HTMLFormControlsCollection & {
       repo: HTMLInputElement;
       message: HTMLTextAreaElement;
+      key: HTMLInputElement;
     };
   };
+  "commit-chat": HTMLButtonElement;
+  "commit-forget": HTMLButtonElement;
   "commit-link": HTMLAnchorElement;
   "commit-submit": HTMLButtonElement;
   "save-dialog": HTMLDialogElement;
@@ -72,7 +89,7 @@ const textSize = (content: string) => fileSize(new TextEncoder().encode(content)
 
 /** The files a message proposes, saving and committing them, and attaching files to a meeting. */
 export function createFiles(app: FilesApp) {
-  const { node, button, checkbox, chip, request } = app;
+  const { node, button, checkbox, chip, request, preview } = app;
   const status = (id: string, message = "", failed = false) => {
     $(id).textContent = message;
     $(id).classList.toggle("failed", failed);
@@ -93,9 +110,10 @@ export function createFiles(app: FilesApp) {
 
   // ---- File cards in the transcript ----
 
-  /** Cards that are open, so a new message does not close them. */
-  const opened = new WeakMap<Message, Set<string>>();
-  function card(message: Message, block: FileBlock) {
+  /** Cards that are open, so drawing them again does not close them. */
+  const opened = new WeakMap<object, Set<string>>();
+  /** @param owner what the cards belong to, a message or a build */
+  function card(owner: object, block: FileBlock) {
     const el = node("details", undefined, "file-card"),
       summary = node("summary"),
       content = node("pre"),
@@ -121,30 +139,41 @@ export function createFiles(app: FilesApp) {
         ),
       );
     el.append(content);
-    el.open = Boolean(opened.get(message)?.has(key));
+    el.open = Boolean(opened.get(owner)?.has(key));
     el.addEventListener("toggle", () => {
-      const open = opened.get(message) ?? new Set<string>();
+      const open = opened.get(owner) ?? new Set<string>();
       if (el.open) open.add(key);
       else open.delete(key);
-      opened.set(message, open);
+      opened.set(owner, open);
     });
+    return el;
+  }
+  /** Save and push buttons for a set of files. Neither changes the meeting. */
+  function actions(files: ProjectFile[], whose: string) {
+    const save = button("Save to folder", () => openSave(files)),
+      push = button("Push to GitHub", () => void openCommit(files), "tertiary"),
+      el = node("div", undefined, "actions");
+    save.setAttribute("aria-label", "Save to folder: " + whose);
+    push.setAttribute("aria-label", "Push to GitHub: " + whose);
+    el.append(save, push);
     return el;
   }
   function cards(message: Message, blocks: FileBlock[]) {
     const el = node("div", undefined, "files");
-    el.append(...blocks.map((block) => card(message, block)));
     const files = extractFiles(message.text);
-    if (files.length) {
-      // Saving changes nothing in the meeting, so an accepted one allows it too.
-      const save = button("Save to folder", () => openSave(files)),
-        commit = button("Commit to GitHub", () => void openCommit(files), "tertiary"),
-        actions = node("div", undefined, "actions");
-      const whose = " " + plural(files.length, "file") + " from " + message.speaker;
-      save.setAttribute("aria-label", "Save to folder:" + whose);
-      commit.setAttribute("aria-label", "Commit to GitHub:" + whose);
-      actions.append(save, commit);
-      el.append(actions);
+    const pages = files.filter((f) => isPreviewable(f.path));
+    if (pages.length) {
+      const meeting = app.meeting();
+      // The design as it stood at this message, with stylesheets sent before it.
+      const then = latestFiles(
+        meeting?.transcript.slice(0, meeting.transcript.indexOf(message) + 1) ?? [message],
+        meeting?.attachments,
+      );
+      el.append(...pages.map((page) => preview(then, page)));
     }
+    el.append(...blocks.map((block) => card(message, block)));
+    if (files.length)
+      el.append(actions(files, plural(files.length, "file") + " from " + message.speaker));
     return el;
   }
 
@@ -228,16 +257,28 @@ export function createFiles(app: FilesApp) {
   });
   $("save-close").addEventListener("click", () => $("save-dialog").close());
 
-  // ---- Committing to GitHub ----
+  // ---- Pushing to GitHub ----
 
   let toCommit: ProjectFile[] = [];
   let commitRound = 0,
     committing = false;
+  /** Whether Quorum can push without a key; null until it has said. */
+  let ownCredential: boolean | null = null;
+  function showKeyState() {
+    const held = Boolean(heldKey());
+    $("commit-key-state").textContent = held
+      ? "This page holds your key for the session. Leave the field empty to use it."
+      : "";
+    $("commit-forget").hidden = !held;
+    $("commit-chat").hidden = held || !app.meeting();
+  }
+  onKeyChange(showKeyState);
   async function openCommit(files: ProjectFile[]) {
     const round = ++commitRound,
       form = $("commit-form");
     toCommit = files;
     committing = false;
+    ownCredential = null;
     // A tag copied into a commit message would notify a GitHub user of that name.
     const goal = (app.meeting()?.goal ?? "").replace(/@/g, "").split("\n")[0].trim();
     let repository = "";
@@ -246,71 +287,131 @@ export function createFiles(app: FilesApp) {
     } catch {
       /* The field then starts empty. */
     }
-    form.elements.repo.value = repository;
+    form.elements.repo.value = app.meeting()?.repository?.repo ?? repository;
     form.elements.message.value = "Add files from Quorum: " + goal.slice(0, 60);
-    form.hidden = true;
-    $("commit-setup").hidden = true;
+    form.elements.key.value = "";
+    showKeyState();
+    $("commit-key-optional").textContent = "";
+    $("commit-allowed").textContent = "";
     $("commit-files").replaceChildren(...files.map((f) => row(f.path, textSize(f.content))));
     $("commit-link").hidden = true;
     $("commit-submit").disabled = false;
     status("commit-status");
-    status("commit-check", "Checking GitHub access…");
+    status("commit-check");
     $("commit-dialog").showModal();
+    form.elements.repo.focus();
     try {
       const github = await request<GitHubStatus>("/api/github");
       if (round !== commitRound) return;
-      status("commit-check");
-      form.hidden = !github.available;
-      $("commit-setup").hidden = github.available;
+      ownCredential = github.available;
+      $("commit-key-optional").textContent = github.available ? "(optional)" : "";
+      status(
+        "commit-check",
+        github.available
+          ? "Quorum can already push with " +
+              (github.source === "cli" ? "your GitHub CLI login" : "the token it was started with") +
+              ", so a key is optional."
+          : "",
+      );
       $("commit-allowed").textContent = github.repos
         ? "Allowed repositories: " + (github.repos.join(", ") || "none")
         : "";
-      if (github.available) form.elements.repo.focus();
+      // The meeting chat asks too, so a key can be posted there.
+      if (!github.available && !heldKey()) askForKey("push", () => void openCommit(files));
     } catch (error) {
       if (round === commitRound) status("commit-check", (error as Error).message, true);
     }
   }
-  // After a commit the button rests until something changes, so one press makes one request.
+  // After a push the button rests until something changes, so one press makes one request.
   $("commit-form").addEventListener("input", () => {
     $("commit-submit").disabled = committing;
   });
   $("commit-form").addEventListener("submit", async (e) => {
     e.preventDefault();
-    const { repo, message } = $("commit-form").elements,
+    const { repo, message, key } = $("commit-form").elements,
       round = commitRound;
+    // The field is emptied at once, whatever happens next.
+    const typed = key.value.trim();
+    key.value = "";
+    if (typed && !isAccessKey(typed)) {
+      forgetKey();
+      $("commit-submit").disabled = false;
+      status(
+        "commit-status",
+        "That does not look like a GitHub access key. A fine-grained key starts with github_pat_.",
+        true,
+      );
+      return key.focus();
+    }
+    if (typed) holdKey(typed);
+    if (!heldKey() && ownCredential === false) {
+      askForKey("push", () => void openCommit(toCommit));
+      status("commit-status", "Enter a GitHub access key to push.", true);
+      return key.focus();
+    }
+    const sent = heldKey();
     committing = true;
     $("commit-submit").disabled = true;
     $("commit-link").hidden = true;
-    status("commit-status", "Committing…");
-    try {
-      localStorage.setItem(REPOSITORY_KEY, repo.value.trim());
-    } catch {
-      /* The repository is then typed again next time. */
-    }
+    status("commit-status", "Pushing…");
     try {
       const done = await request<Committed>("/api/github/commit", "POST", {
         repo: repo.value.trim(),
         message: message.value,
         files: toCommit,
+        ...(sent ? { key: sent } : {}),
       });
+      closeKeyRequest();
       if (round !== commitRound) return;
       committing = false;
+      // Stored only once GitHub has accepted it as a repository name.
+      try {
+        localStorage.setItem(REPOSITORY_KEY, done.repo);
+      } catch {
+        /* The repository is then typed again next time. */
+      }
       status(
         "commit-status",
-        "Committed to the new branch " + done.branch + " in " + done.repo + ".",
+        "Pushed to the new branch " + done.branch + " in " + done.repo + ".",
       );
       const url = done.url.startsWith("https://github.com/") ? done.url : "";
       $("commit-link").hidden = !url;
       $("commit-link").href = url;
       $("commit-link").textContent = "Open pull request #" + done.number;
     } catch (error) {
+      const refused = error as Error & { keyRejected?: boolean };
+      const forgotten = Boolean(refused.keyRejected) && heldKey() === sent;
+      if (forgotten) {
+        forgetKey();
+        const files = toCommit;
+        askForKey("push", () => void openCommit(files));
+      }
       if (round !== commitRound) return;
       committing = false;
-      status("commit-status", (error as Error).message, true);
+      status(
+        "commit-status",
+        refused.message + (forgotten ? " The key was forgotten." : ""),
+        true,
+      );
       $("commit-submit").disabled = false;
     }
   });
+  $("commit-chat").addEventListener("click", () => {
+    const files = toCommit;
+    askForKey("push", () => void openCommit(files));
+    $("commit-dialog").close();
+    document.getElementById("message")!.focus();
+  });
+  $("commit-forget").addEventListener("click", () => {
+    forgetKey();
+    $("commit-form").elements.key.value = "";
+    $("commit-submit").disabled = committing;
+    $("commit-form").elements.key.focus();
+    $("commit-key-state").textContent = "Key forgotten.";
+  });
   $("commit-close").addEventListener("click", () => $("commit-dialog").close());
+  // A key typed but never used does not wait in the closed dialog.
+  $("commit-dialog").addEventListener("close", () => ($("commit-form").elements.key.value = ""));
 
   // ---- Attaching files to a meeting ----
 
@@ -347,9 +448,18 @@ export function createFiles(app: FilesApp) {
   function attach(meeting: Meeting, added: Attachment[]) {
     if (meeting !== app.meeting() || meeting.status === "accepted")
       throw new Error("This meeting can no longer be changed.");
+    // A key in a file does not go into the meeting or to its agents.
+    const clean = added.map((f) => ({
+      ...f,
+      content: scrub(f.content),
+      source: scrub(f.source),
+      // Later versions agents propose were written with this one in front of them.
+      after: meeting.transcript.length,
+    }));
+    const keyed = clean.filter((f) => f.content.includes(KEY_REMOVED)).map((f) => f.path);
     const key = (f: Attachment) => f.source + "\n" + f.path;
     const files = new Map((meeting.attachments ?? []).map((f) => [key(f), f]));
-    for (const file of added) files.set(key(file), file);
+    for (const file of clean) files.set(key(file), file);
     const next = [...files.values()];
     if (next.length > MAX_FILES)
       throw new Error("A meeting can have at most " + MAX_FILES + " attached files.");
@@ -362,7 +472,11 @@ export function createFiles(app: FilesApp) {
     meeting.attachments = next;
     app.save();
     renderAttachments();
-    status("attach-status", "Attached " + added.map((f) => f.path).join(", ") + ".");
+    status(
+      "attach-status",
+      "Attached " + added.map((f) => f.path).join(", ") + "." +
+        (keyed.length ? " A GitHub key was removed from " + keyed.join(", ") + "." : ""),
+    );
   }
   function renderWorkspace() {
     const query = $("attach-search").value.trim().toLowerCase();
@@ -468,5 +582,5 @@ export function createFiles(app: FilesApp) {
   });
   $("attach-close").addEventListener("click", () => $("attach-dialog").close());
 
-  return { cards, renderAttachments };
+  return { cards, card, actions, attach, renderAttachments };
 }

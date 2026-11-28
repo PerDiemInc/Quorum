@@ -71,8 +71,8 @@ const server = createServer(async (req, res) => {
     if (busy) return json(409, { error: "A host CLI turn is already running" });
     busy = true;
     try {
-      // Writing whole files takes longer than a spoken turn.
-      const limit = canCreateFiles(agent) ? 290_000 : 180_000;
+      // Writing whole files or a long document takes longer than a spoken turn.
+      const limit = canCreateFiles(agent) || data.prompt.long ? 290_000 : 180_000;
       const signal = AbortSignal.any([abort.signal, AbortSignal.timeout(limit)]);
       const text = await respond(agent, data.prompt as Prompt, signal);
       if (!res.destroyed) json(200, { text });

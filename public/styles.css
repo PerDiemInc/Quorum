@@ -149,7 +149,7 @@ details[open] > :not(summary) { margin-top: 0.875rem; }
 .host .message-body { align-items: flex-end; }
 .host .bubble-line { flex-direction: row-reverse; }
 .host .bubble { border-radius: 1.25rem 0.375rem 1.25rem 1.25rem; background: var(--accent); color: var(--accent-foreground); }
-.notice-line { align-self: center; }
+.notice-line { align-self: center; max-width: 100%; text-align: center; overflow-wrap: anywhere; }
 .activity { display: flex; align-items: center; gap: 0.5rem; }
 .activity:has(#progress:empty) { display: none; }
 .activity .spinner { display: none; width: 1rem; height: 1rem; }
@@ -270,7 +270,57 @@ dialog.modal__dialog > .pick-list { display: flex; flex-direction: column; gap: 
 .status, .notice { overflow-wrap: anywhere; }
 a.button { text-decoration: none; }
 #commit-link { align-self: flex-start; }
-#commit-setup ul { display: flex; flex-direction: column; gap: 0.25rem; margin: 0.5rem 0; padding-inline-start: 1.25rem; list-style: disc; }
+.key-help { display: flex; flex-direction: column; align-items: flex-start; gap: 0.5rem; }
+.terms { display: flex; flex-direction: column; gap: 0.25rem; margin: 0.5rem 0 0; padding-inline-start: 1.25rem; list-style: disc; }
+
+/* Speaking order */
+.participant__turn { display: flex; flex-wrap: wrap; gap: 0.375rem; }
+.participant__turn .chip:not(.chip--accent) { background: var(--default); }
+.voice-mode .participant__turn { justify-content: center; }
+.team-note { margin-bottom: 0.75rem; }
+.team-note:empty { display: none; }
+
+/* What next, the repository and the access key, beside the conversation */
+.next-steps, .repo-panel, .key-request { display: flex; flex-direction: column; gap: 0.5rem; min-width: 0; padding: 0.875rem 1rem; border-radius: 1.25rem; background: var(--surface-secondary); }
+.next-steps { border: 2px solid var(--accent); }
+.next-steps h3 { font-size: 0.9375rem; font-weight: 600; }
+.key-request { background: var(--accent-soft); }
+.key-request p { overflow-wrap: anywhere; }
+.repo-panel__head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.5rem; }
+.repo-panel__head p { flex: 1; min-width: 12rem; overflow-wrap: anywhere; }
+.repo-held { display: flex; flex-direction: column; gap: 0.375rem; margin: 0; padding: 0; list-style: none; }
+.repo-held:empty { display: none; }
+.repo-held li { display: flex; flex-direction: column; gap: 0.375rem; padding: 0.5rem 0.75rem; border: 1px solid var(--warning); border-radius: 0.875rem; overflow-wrap: anywhere; }
+.destination { display: flex; flex-direction: column; gap: 0.25rem; }
+.destination .radio { cursor: pointer; }
+.destination .radio__content { display: flex; flex-direction: row; align-items: center; gap: 0.75rem; min-height: 2rem; }
+.radio:has(input:focus-visible) .radio__control { outline: 2px solid var(--focus); outline-offset: 2px; }
+/* Stays in view for as long as commits go straight to the default branch. */
+.direct-banner { position: sticky; top: 4.25rem; z-index: 5; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.5rem; padding: 0.625rem 1rem; border: 2px solid var(--danger); border-radius: 1rem; background: var(--surface); }
+.direct-banner p { flex: 1; min-width: 12rem; overflow-wrap: anywhere; font-weight: 600; color: var(--danger-soft-foreground); }
+#direct-waiting:empty { display: none; }
+.risk { padding: 0.875rem 1rem; border-radius: 1rem; background: var(--danger-soft); overflow-wrap: anywhere; }
+.commit-note { display: flex; flex-direction: column; align-items: center; align-self: center; gap: 0.375rem; max-width: 100%; padding: 0.5rem 0.875rem; border-radius: 1rem; background: var(--surface-secondary); text-align: center; overflow-wrap: anywhere; }
+.build-result { display: flex; flex-direction: column; gap: 0.5rem; min-width: 0; padding-top: 0.75rem; border-top: 1px solid var(--separator); }
+.build-result h4 { font-size: 0.875rem; font-weight: 600; }
+.build-result__previews { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr)); gap: 0.5rem; }
+.build-result__previews:empty { display: none; }
+.build-steps { display: flex; flex-direction: column; gap: 0.25rem; margin: 0; padding-inline-start: 1.25rem; list-style: decimal; }
+.build-notes { display: flex; flex-direction: column; gap: 0.5rem; margin: 0; padding: 0; list-style: none; }
+.build-notes:empty { display: none; }
+.build-notes li { padding: 0.625rem 0.875rem; border-radius: 1rem; background: var(--accent-soft); overflow-wrap: anywhere; }
+#handoff-text { min-height: 12rem; max-height: 46dvh; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.75rem; }
+
+/* Design previews. A page without a background of its own expects white. */
+.preview { display: flex; flex-direction: column; gap: 0.375rem; min-width: 0; margin: 0; padding: 0.5rem; border: 1px solid var(--border); border-radius: 1rem; background: var(--surface-secondary); }
+.preview figcaption { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.5rem; padding-inline-start: 0.25rem; font-size: 0.75rem; }
+.preview figcaption span { min-width: 0; overflow-wrap: anywhere; }
+.preview__frame { display: flex; justify-content: center; align-items: center; min-width: 0; }
+.preview__frame iframe { display: block; width: 100%; height: 18rem; border: 0; border-radius: 0.5rem; background: #fff; color-scheme: light; }
+dialog.modal__dialog.preview-dialog { width: 96vw; max-width: 80rem; height: 90dvh; max-height: 90dvh; }
+dialog.modal__dialog > #preview-full { flex: 1; align-items: stretch; min-height: 12rem; }
+#preview-full iframe { height: 100%; }
+#preview-full.phone iframe { max-width: 375px; box-shadow: 0 0 0 1px var(--border); }
 
 /* Error toast */
 #alert { position: fixed; z-index: 30; left: 50%; bottom: 1.25rem; transform: translateX(-50%); width: min(35rem, calc(100vw - 2rem)); align-items: center; box-shadow: var(--overlay-shadow); animation: rise 0.25s ease; }
@@ -310,6 +360,9 @@ a.button { text-decoration: none; }
   .button--icon-only, .play { width: 2.75rem; }
   .input, .textarea { min-height: 2.75rem; font-size: 1rem; }
   .switch, .compact, .pick-list .checkbox, .file-card summary { min-height: 2.75rem; }
+  #limit-note { flex-basis: 100%; }
+  .destination .radio__content { min-height: 2.75rem; }
+  .direct-banner { top: 0; }
   .switch__content { min-height: 2.75rem; }
   .close-button { width: 2.75rem; height: 2.75rem; }
 }

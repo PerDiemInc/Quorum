@@ -109,9 +109,16 @@
                 <input id="invite-search" class="input input--secondary" type="search" placeholder="Search agents" aria-label="Search agents to invite" />
                 <div id="invite-filter" class="filters" role="group" aria-label="Filter agents by group"></div>
               </div>
+              <p class="muted small team-note">
+                Agents speak in this order, then start again: Product, UI/UX design, Engineering, Security, other
+                specialists, Project manager. The product team button picks one agent for each of those five stages,
+                using yours and adding built-in specialists where one is missing.
+              </p>
+              <p id="team-status" class="muted small team-note" role="status"></p>
               <div class="filter-bar">
                 <span id="selection-count" class="muted small" aria-live="polite"></span>
                 <div class="actions">
+                  <button type="button" class="button button--secondary button--sm" id="invite-team">Invite the product team</button>
                   <button type="button" class="button button--tertiary button--sm" id="reuse-team" hidden>Use last meeting’s team</button>
                   <button type="button" class="button button--tertiary button--sm" id="invite-shown">Select shown</button>
                   <button type="button" class="button button--ghost button--sm" id="invite-clear">Clear</button>
@@ -169,6 +176,11 @@
             </details>
           </div>
 
+          <div id="direct-banner" class="direct-banner" hidden>
+            <p id="direct-banner-text" role="status"></p>
+            <button id="direct-banner-pull" type="button" class="button button--secondary button--sm">Use a pull request</button>
+          </div>
+
           <div class="meeting-grid">
             <div class="card card--default conversation">
               <div class="controls">
@@ -191,8 +203,9 @@
                 >
                 <label class="compact"
                   ><span class="label">Turns per run</span
-                  ><input id="limit" class="input input--secondary" type="number" value="12" min="1" max="60"
+                  ><input id="limit" class="input input--secondary" type="number" value="12" min="1" max="60" aria-describedby="limit-note"
                 /></label>
+                <span id="limit-note" class="muted small">Ends where a round does</span>
               </div>
               <div
                 id="transcript"
@@ -201,9 +214,65 @@
                 aria-label="Meeting transcript"
                 tabindex="0"
               ></div>
+              <section id="next-steps" class="next-steps" aria-labelledby="next-title" hidden>
+                <h3 id="next-title">What next?</h3>
+                <p id="next-note" class="muted small"></p>
+                <div class="actions">
+                  <button id="next-prompt" type="button" class="button button--primary button--sm">Get a prompt for Claude</button>
+                  <button id="next-build" type="button" class="button button--secondary button--sm">Build it here</button>
+                  <button id="next-round" type="button" class="button button--tertiary button--sm">Another round</button>
+                  <button id="next-rebuild" type="button" class="button button--ghost button--sm" hidden>Start the build again</button>
+                </div>
+                <div id="build-result" class="build-result" hidden></div>
+              </section>
               <div class="activity">
                 <svg class="spinner spinner--sm spinner--accent" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9" /></svg>
                 <p id="progress" class="muted small" aria-live="polite"></p>
+              </div>
+              <section id="repo-panel" class="repo-panel" aria-label="GitHub repository">
+                <div class="repo-panel__head">
+                  <p id="repo-summary" class="small"></p>
+                  <a id="repo-pull" class="button button--tertiary button--sm" target="_blank" rel="noopener noreferrer" hidden></a>
+                </div>
+                <label class="switch" id="repo-auto-switch" data-selected="false" hidden
+                  ><input class="choice-input" id="repo-auto" type="checkbox" role="switch" /><span class="switch__content"
+                    ><span class="switch__control"><span class="switch__thumb"></span></span
+                    ><span data-slot="label">Commit agents' code automatically</span></span
+                  ></label
+                >
+                <fieldset id="repo-destination" class="destination" hidden>
+                  <legend class="label">Where commits go</legend>
+                  <label class="radio"
+                    ><input class="choice-input" id="repo-destination-pull" type="radio" name="repo-destination" value="pull" checked /><span class="radio__content"
+                      ><span class="radio__control"><span class="radio__indicator"></span></span
+                      ><span data-slot="label">A new branch with a pull request</span></span
+                    ></label
+                  >
+                  <label class="radio"
+                    ><input class="choice-input" id="repo-destination-direct" type="radio" name="repo-destination" value="direct" /><span class="radio__content"
+                      ><span class="radio__control"><span class="radio__indicator"></span></span
+                      ><span data-slot="label" id="repo-direct-label">Directly to the default branch</span></span
+                    ></label
+                  >
+                </fieldset>
+                <p id="repo-status" class="status small" role="status"></p>
+                <ul id="repo-held" class="repo-held" aria-label="Files held back"></ul>
+                <div class="actions">
+                  <button id="repo-connect" type="button" class="button button--tertiary button--sm">Connect repository</button>
+                  <button id="repo-commit" type="button" class="button button--primary button--sm" hidden>Commit now</button>
+                  <button id="repo-use-pull" type="button" class="button button--secondary button--sm" hidden>Use a pull request instead</button>
+                  <button id="repo-attach" type="button" class="button button--tertiary button--sm" hidden>Attach from repository</button>
+                  <button id="repo-disconnect" type="button" class="button button--ghost button--sm" hidden>Disconnect</button>
+                </div>
+              </section>
+              <div id="key-request" class="key-request" hidden>
+                <p><strong>Quorum</strong> <span id="key-request-text" role="status"></span></p>
+                <div class="actions">
+                  <button id="key-request-action" type="button" class="button button--primary button--sm" hidden></button>
+                  <a id="key-request-link" class="button button--tertiary button--sm" href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener noreferrer">Create a key on GitHub</a>
+                  <button id="key-request-forget" type="button" class="button button--danger-soft button--sm" hidden>Forget key</button>
+                  <button id="key-request-close" type="button" class="button button--ghost button--sm">Not now</button>
+                </div>
               </div>
               <form id="message-form">
                 <label for="message" class="label">Join the conversation</label>
@@ -217,6 +286,7 @@
                     maxlength="16000"
                     rows="2"
                     placeholder="Give feedback, or type @ to ask a specific agent"
+                    autocomplete="off"
                     aria-autocomplete="list"
                     aria-controls="mention-list"
                     aria-expanded="false"
@@ -256,6 +326,7 @@
                     Add agent
                   </button>
                 </div>
+                <p id="next-speaker" class="muted small"></p>
                 <div id="team" class="team"></div>
               </div>
             </div>
@@ -472,29 +543,35 @@
 
     <dialog id="commit-dialog" class="modal__dialog" aria-labelledby="commit-title">
       <header class="dialog-head">
-        <h2 id="commit-title" class="modal__heading">Commit to GitHub</h2>
+        <h2 id="commit-title" class="modal__heading">Push to GitHub</h2>
         <button id="commit-close" type="button" class="close-button close-button--default" aria-label="Close">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17" /></svg>
         </button>
       </header>
       <p id="commit-check" class="status" role="status"></p>
-      <div id="commit-setup" class="notice" hidden>
-        <p><strong>Committing is off.</strong> To turn it on, restart Quorum with one of these:</p>
-        <ul>
-          <li><code>QUORUM_GITHUB_TOKEN</code> with <code>QUORUM_GITHUB_WRITE=1</code>: a fine-grained token for the repository with Contents and Pull requests write access.</li>
-          <li><code>QUORUM_GITHUB_CLI=1</code>: use your <code>gh auth login</code> session.</li>
-        </ul>
-        <p><code>QUORUM_GITHUB_REPOS</code> can limit which repositories are written to.</p>
-      </div>
-      <form id="commit-form" hidden>
+      <form id="commit-form" autocomplete="off">
         <label class="field"
           ><span class="label">Repository</span
           ><input class="input input--secondary input--full-width" name="repo" maxlength="140" required placeholder="owner/name" autocomplete="off" autocapitalize="off" spellcheck="false" pattern="\s*[A-Za-z0-9][A-Za-z0-9\-]*/[A-Za-z0-9._\-]+\s*"
         /></label>
         <p id="commit-allowed" class="muted small"></p>
         <label class="field"><span class="label">Commit message</span><textarea class="textarea textarea--secondary textarea--full-width" name="message" maxlength="5000" rows="2" required></textarea></label>
-        <h3>Files in this commit</h3>
-        <ul id="commit-files" class="file-list" aria-label="Files to commit"></ul>
+        <label class="field"
+          ><span class="label">GitHub access key <span id="commit-key-optional" class="muted"></span></span
+          ><input class="input input--secondary input--full-width" type="password" name="key" maxlength="1100" autocomplete="off" autocapitalize="off" spellcheck="false" aria-describedby="commit-key-help" data-1p-ignore data-lpignore="true" data-bwignore
+        /></label>
+        <div id="commit-key-help" class="key-help">
+          <p class="muted small">Make a fine-grained key for only the target repository, with Contents and Pull requests: read and write.</p>
+          <a class="button button--tertiary button--sm" href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener noreferrer">Create a key on GitHub</a>
+          <p class="muted small">The key stays in this open page's memory. It goes only to Quorum on this computer, to make requests to GitHub, and is never saved, logged or given to agents. Reloading the page or Forget key removes it.</p>
+        </div>
+        <p id="commit-key-state" class="muted small" role="status"></p>
+        <div class="actions">
+          <button id="commit-forget" type="button" class="button button--danger-soft button--sm" hidden>Forget key</button>
+          <button id="commit-chat" type="button" class="button button--ghost button--sm" hidden>Paste it in the chat instead</button>
+        </div>
+        <h3>Files in this push</h3>
+        <ul id="commit-files" class="file-list" aria-label="Files to push"></ul>
         <p class="notice">
           This opens a pull request from a new branch. Existing branches are not changed.
           In a public repository the files become public. Read them first: workflows
@@ -502,8 +579,154 @@
         </p>
         <p id="commit-status" class="status" role="status"></p>
         <a id="commit-link" class="button button--secondary" target="_blank" rel="noopener noreferrer" hidden></a>
-        <button id="commit-submit" type="submit" class="button button--primary button--full-width">Commit and open pull request</button>
+        <button id="commit-submit" type="submit" class="button button--primary button--full-width">Push and open pull request</button>
       </form>
+    </dialog>
+
+    <dialog id="connect-dialog" class="modal__dialog" aria-labelledby="connect-title">
+      <header class="dialog-head">
+        <h2 id="connect-title" class="modal__heading">Connect a repository</h2>
+        <button id="connect-close" type="button" class="close-button close-button--default" aria-label="Close">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17" /></svg>
+        </button>
+      </header>
+      <form id="connect-form" autocomplete="off">
+        <label class="field"
+          ><span class="label">Repository</span
+          ><input class="input input--secondary input--full-width" name="repo" maxlength="140" required placeholder="owner/name" autocomplete="off" autocapitalize="off" spellcheck="false"
+        /></label>
+        <div class="notice">
+          <p><strong>Connecting lets agents' code reach GitHub without you reviewing each file.</strong></p>
+          <ul class="terms">
+            <li>While automatic commits are on, each reply that adds or changes files is committed at once.</li>
+            <li>By default commits go to one new branch for this meeting, starting with quorum/, with a pull request, and the default branch is not changed. Committing straight to the default branch is a separate choice that you confirm.</li>
+            <li>Other branches are never changed, and nothing is deleted or renamed.</li>
+            <li>The repository's workflows may run on those commits, with their secrets, before you read them.</li>
+            <li>An existing file is replaced only if this meeting has seen its current contents, or you approve it.</li>
+          </ul>
+        </div>
+        <label class="switch" data-selected="true"
+          ><input class="choice-input" type="checkbox" role="switch" name="auto" checked /><span class="switch__content"
+            ><span class="switch__control"><span class="switch__thumb"></span></span
+            ><span data-slot="label">Commit agents' code automatically</span></span
+          ></label
+        >
+        <fieldset class="destination">
+          <legend class="label">Where commits go</legend>
+          <label class="radio"
+            ><input class="choice-input" id="connect-destination-pull" type="radio" name="destination" value="pull" checked /><span class="radio__content"
+              ><span class="radio__control"><span class="radio__indicator"></span></span
+              ><span data-slot="label">A new branch with a pull request</span></span
+            ></label
+          >
+          <label class="radio"
+            ><input class="choice-input" id="connect-destination-direct" type="radio" name="destination" value="direct" /><span class="radio__content"
+              ><span class="radio__control"><span class="radio__indicator"></span></span
+              ><span data-slot="label">Directly to the default branch (you confirm next)</span></span
+            ></label
+          >
+        </fieldset>
+        <p id="connect-now" class="small"></p>
+        <label class="field"
+          ><span class="label">GitHub access key <span id="connect-key-optional" class="muted"></span></span
+          ><input class="input input--secondary input--full-width" type="password" name="key" maxlength="1100" autocomplete="off" autocapitalize="off" spellcheck="false" aria-describedby="connect-key-help" data-1p-ignore data-lpignore="true" data-bwignore
+        /></label>
+        <div id="connect-key-help" class="key-help">
+          <p class="muted small">Make a fine-grained key for only this repository, with Contents and Pull requests: read and write.</p>
+          <a class="button button--tertiary button--sm" href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener noreferrer">Create a key on GitHub</a>
+          <p class="muted small">The key stays in this open page's memory. It goes only to Quorum on this computer, to make requests to GitHub, and is never saved, logged or given to agents. Reloading the page or Forget key removes it.</p>
+        </div>
+        <p id="connect-status" class="status" role="status"></p>
+        <button id="connect-submit" type="submit" class="button button--primary button--full-width">Connect</button>
+      </form>
+    </dialog>
+
+    <dialog id="direct-dialog" class="modal__dialog" aria-labelledby="direct-title">
+      <header class="dialog-head">
+        <h2 id="direct-title" class="modal__heading">Commit straight to the default branch?</h2>
+        <button id="direct-close" type="button" class="close-button close-button--default" aria-label="Close">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17" /></svg>
+        </button>
+      </header>
+      <div class="risk">
+        <p><strong id="direct-target"></strong></p>
+        <p id="direct-waiting"></p>
+        <ul class="terms">
+          <li>Nobody reviews these commits. What agents write is live on this branch immediately.</li>
+          <li>Workflows and deployments that run on this branch will run, with their secrets.</li>
+          <li>In a public repository the files are public at once.</li>
+          <li>It applies to this meeting and this repository only. Disconnecting turns it off.</li>
+        </ul>
+      </div>
+      <div class="actions end">
+        <button id="direct-cancel" type="button" class="button button--secondary">Keep the pull request</button>
+        <button id="direct-confirm" type="button" class="button button--danger"></button>
+      </div>
+    </dialog>
+
+    <dialog id="repo-dialog" class="modal__dialog" aria-labelledby="repo-title">
+      <header class="dialog-head">
+        <h2 id="repo-title" class="modal__heading">Attach from the repository</h2>
+        <button id="repo-dialog-close" type="button" class="close-button close-button--default" aria-label="Close">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17" /></svg>
+        </button>
+      </header>
+      <p class="muted small">Every agent in this meeting can read an attached file, and it is sent to their model providers.</p>
+      <p id="repo-source" class="muted small"></p>
+      <input id="repo-search" class="input input--secondary input--full-width" type="search" placeholder="Search files" aria-label="Search repository files" />
+      <div id="repo-list" class="pick-list"></div>
+      <p id="repo-dialog-status" class="status" role="status"></p>
+      <button id="repo-add" type="button" class="button button--primary button--full-width" disabled>Attach selected</button>
+    </dialog>
+
+    <dialog id="build-dialog" class="modal__dialog" aria-labelledby="build-title">
+      <header class="dialog-head">
+        <h2 id="build-title" class="modal__heading">Build it here</h2>
+        <button id="build-close" type="button" class="close-button close-button--default" aria-label="Close">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17" /></svg>
+        </button>
+      </header>
+      <p class="muted small">Agents take one step each, in this order. They send files as text. Nothing is saved or pushed unless you choose to, or have automatic commits on for this meeting.</p>
+      <ol id="build-steps" class="build-steps"></ol>
+      <ul id="build-notes" class="build-notes"></ul>
+      <button id="build-start" type="button" class="button button--primary button--full-width">Start building</button>
+    </dialog>
+
+    <dialog id="handoff-dialog" class="modal__dialog modal__dialog--lg" aria-labelledby="handoff-title">
+      <header class="dialog-head">
+        <h2 id="handoff-title" class="modal__heading">Prompt for Claude</h2>
+        <button id="handoff-close" type="button" class="close-button close-button--default" aria-label="Close">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17" /></svg>
+        </button>
+      </header>
+      <p id="handoff-status" class="status" role="status"></p>
+      <p id="handoff-by" class="muted small"></p>
+      <textarea id="handoff-text" class="textarea textarea--secondary textarea--full-width" rows="14" readonly aria-label="Prompt for Claude"></textarea>
+      <p class="muted small">Paste it into Claude or Claude Code. Read it first: a model wrote it from the discussion, and the files at the end are drafts.</p>
+      <div class="actions">
+        <button id="handoff-copy" type="button" class="button button--primary button--sm">Copy</button>
+        <button id="handoff-download" type="button" class="button button--secondary button--sm">Download (.md)</button>
+        <button id="handoff-write" type="button" class="button button--tertiary button--sm">Write again</button>
+      </div>
+    </dialog>
+
+    <dialog id="preview-dialog" class="modal__dialog preview-dialog" aria-labelledby="preview-title">
+      <header class="dialog-head">
+        <h2 id="preview-title" class="modal__heading"></h2>
+        <button id="preview-close" type="button" class="close-button close-button--default" aria-label="Close">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17" /></svg>
+        </button>
+      </header>
+      <div class="tabs" data-orientation="horizontal" role="group" aria-label="Preview width">
+        <div class="tabs__list-container">
+          <div class="tabs__list" data-orientation="horizontal">
+            <button id="preview-desktop" type="button" class="tabs__tab" data-selected="true" aria-pressed="true">Desktop<span class="tabs__indicator"></span></button>
+            <button id="preview-phone" type="button" class="tabs__tab" aria-pressed="false">Phone<span class="tabs__indicator"></span></button>
+          </div>
+        </div>
+      </div>
+      <p class="muted small">Scripts are off and nothing is loaded from the network.</p>
+      <div id="preview-full" class="preview__frame"></div>
     </dialog>
 
     <div id="alert" class="alert alert--danger" role="alert">

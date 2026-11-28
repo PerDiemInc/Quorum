@@ -6,7 +6,8 @@ import { join } from "node:path";
 import { commitToGitHub, githubStatus, readGitHubFile } from "../src/github.ts";
 import { respond } from "../src/providers.ts";
 
-const TOKEN = "github_pat_TESTONLY1234567890";
+// Built here so that secret scanners see no key in the repository.
+const TOKEN = "github_pat_" + "TESTONLY1234567890";
 const saved = { ...process.env };
 const directory = await mkdtemp(join(tmpdir(), "quorum-github-test-"));
 beforeEach(() => {

@@ -17,13 +17,36 @@ import {
   canCreateFiles,
   splitFiles,
   turnContext,
+  stageOf,
+  stageNames,
+  inTeamOrder,
+  orderMeeting,
+  advanceRound,
+  buildAgent,
+  buildTask,
+  MAX_TURNS,
+  withoutKeys,
 } from "/engine.js";
-import type { Agent, Meeting, Message, Provider, Skill, State } from "/engine.js";
+import type { Agent, BuildKind, Meeting, Message, Provider, Skill, State } from "/engine.js";
 import { createImport } from "/import.js";
 import type { ImportedProfile } from "/import.js";
 import { createMentions } from "/mentions.js";
 import { createFiles } from "/files.js";
+import { createPreviews } from "/preview.js";
+import { createNext } from "/next.js";
+import { createRepository } from "/repository.js";
+import {
+  askingForKey,
+  closeKeyRequest,
+  createKeyRequest,
+  heldKey,
+  intercept,
+  onKeyChange,
+  scrub,
+} from "/key.js";
 
+/** Requests whose body may carry the GitHub access key. */
+const KEYED_REQUESTS = ["/api/github/commit", "/api/github/auto-commit", "/api/github/tree", "/api/github/read"];
 /** What /api/config reports. */
 interface Config {
   whisper: boolean;
@@ -93,6 +116,7 @@ interface Elements {
   "install-model-form": Form<{ model: HTMLInputElement }>;
   "invite-more": HTMLButtonElement;
   "invite-search": HTMLInputElement;
+  "invite-team": HTMLButtonElement;
   "join-dialog": HTMLDialogElement;
   "join-search": HTMLInputElement;
   limit: HTMLInputElement;
@@ -123,7 +147,9 @@ let state: State = { agents: [], meetings: [] },
   running: AbortController | null = null,
   revision = 0,
   recording: MediaRecorder | null = null,
-  speaker: { id: string; turn: AbortController } | null = null;
+  speaker: { id: string; turn: AbortController } | null = null,
+  // The agent whose turn in the rotation is waiting for its model.
+  thinking: string | null = null;
 let saveQueue = Promise.resolve();
 let stateVersion = 0;
 function error(message = "") {
@@ -135,22 +161,31 @@ async function request<T>(
   data?: unknown,
   signal?: AbortSignal,
 ): Promise<T> {
+  const body = JSON.stringify(data) as string | undefined;
   const res = await fetch(path, {
     method,
     signal,
-    ...(data === undefined
+    ...(body === undefined
       ? {}
       : {
           headers: { "content-type": "application/json" },
-          body: JSON.stringify(data),
+          // Only a request to GitHub through this server may carry the access key.
+          body: KEYED_REQUESTS.includes(path) ? body : scrub(body),
         }),
   });
   const json: unknown = await res.json();
   if (!res.ok) {
-    const refused = json as { error?: string; conflicts?: string[] };
+    const refused = json as {
+      error?: string;
+      conflicts?: string[];
+      keyRejected?: boolean;
+      directRefused?: boolean;
+    };
     throw Object.assign(new Error(refused.error ?? "HTTP " + res.status), {
       status: res.status,
       conflicts: refused.conflicts,
+      keyRejected: refused.keyRejected,
+      directRefused: refused.directRefused,
     });
   }
   return json as T;
@@ -488,8 +523,9 @@ function field(labelText: string, control: HTMLElement) {
 function renderTeam() {
   $("team").replaceChildren();
   if (!current) return;
-  for (const a of current.participants) {
+  for (const [index, a] of current.participants.entries()) {
     const card = node("div", undefined, "participant card"),
+      turn = node("div", undefined, "participant__turn"),
       head = node("div", undefined, "participant__head"),
       info = agentInfo(a, modelLabel(a)),
       settings = node("details", undefined, "participant__settings"),
@@ -498,6 +534,10 @@ function renderTeam() {
     card.classList.toggle("active", speaker?.id === a.id);
     info.append(node("small", a.voice ? voiceName(a.voice).split(" · ")[0] + " voice" : ""));
     head.append(avatar(a.name), info);
+    const next = chip("Speaks next", "accent");
+    next.classList.add("next-chip");
+    next.hidden = true;
+    turn.append(chip(index + 1 + " · " + stageNames[stageOf(a)]), next);
     summary.setAttribute("aria-label", a.name + " settings");
     settings.open = openSettings.has(a.id);
     settings.addEventListener("toggle", () => {
@@ -519,7 +559,7 @@ function renderTeam() {
       void save();
     });
     model.addEventListener("change", () => {
-      a.model = model.value.trim();
+      a.model = model.value = intercept(model.value).text.trim();
       describe();
       void save();
     });
@@ -558,11 +598,27 @@ function renderTeam() {
     const actions = node("div", undefined, "actions participant__actions");
     actions.append(ask, remove);
     settings.append(summary, ...fields, writes);
-    card.append(head, actions, settings);
+    card.append(head, turn, actions, settings);
     $("team").append(card);
   }
   $("room-count").textContent =
     current.participants.length + " of " + MAX_PARTICIPANTS;
+  renderOrder();
+}
+/** Who the rotation reaches next, or after the turn under way. */
+function renderOrder() {
+  if (!current) return;
+  const { participants, status } = current;
+  const busy = participants.findIndex((p) => p.id === thinking);
+  const next =
+    status === "accepted" || !participants.length
+      ? undefined
+      : nextParticipant(participants, busy >= 0 ? busy + 1 : (current.cursor ?? 0));
+  $("next-speaker").textContent = next
+    ? "Speaks next: " + next.name + " (" + stageNames[stageOf(next)] + ")"
+    : "";
+  for (const card of $("team").children as HTMLCollectionOf<HTMLElement>)
+    card.querySelector<HTMLElement>(".next-chip")!.hidden = card.dataset.agent !== next?.id;
 }
 function renderMeetingAgents() {
   $("meeting-agents").textContent = current!.participants
@@ -577,6 +633,7 @@ function removeFromCall(id: string) {
   if (!removed) return;
   (current.removedParticipants ??= []).push(removed);
   // Only the removed agent's turn is cancelled; the discussion keeps running.
+  if (thinking === id) thinking = null;
   if (speaker?.id === id) {
     speaker.turn.abort();
     speaker = null;
@@ -644,18 +701,21 @@ function renderJoinList() {
     ? "This meeting is full (" + MAX_PARTICIPANTS + " agents). Remove one to add another."
     : current.participants.length + " of " + MAX_PARTICIPANTS + " in the meeting";
 }
-/** Bring an agent in, even mid-discussion: it speaks when the rotation reaches it. */
+/** Bring an agent in, even mid-discussion, at its place in the speaking order. */
 function joinCall(source: Agent) {
   if (!current || current.status === "accepted") return;
   const agent = structuredClone(source);
   try {
-    addParticipant(current, agent);
+    addParticipant(current, agent, thinking ?? undefined);
   } catch (e) {
     $("join-count").textContent = (e as Error).message;
     return;
   }
-  // The newcomer is last, so everyone already there keeps their voice.
-  assignVoices(current.participants, state.agents);
+  // Those already there choose first, so everyone keeps their voice.
+  assignVoices(
+    [...current.participants.filter((p) => p !== agent), agent],
+    state.agents,
+  );
   current.removedParticipants = current.removedParticipants?.filter(
     (p) => p.id !== agent.id,
   );
@@ -684,61 +744,97 @@ $("invite-more").addEventListener("click", () => {
 });
 $("join-search").addEventListener("input", renderJoinList);
 $("join-close").addEventListener("click", () => $("join-dialog").close());
+/** The message each row of the transcript shows. */
+const rowMessages = new WeakMap<Element, Message>();
+/** The meeting and names the rows were drawn for, since tags depend on who is there. */
+let rowsFor = "";
+/** Rows already on screen are left in place: moving a design preview would load it again. */
 function renderTranscript() {
-  $("transcript").replaceChildren();
-  if (!current) return;
-  for (const m of current.transcript) {
-    if (m.speaker === "Quorum" && !m.model) {
-      $("transcript").append(node("p", m.text, "chip chip--sm notice-line"));
-      continue;
-    }
-    const host = m.speaker === "Host",
-      row = node("article", undefined, host ? "message host" : "message"),
-      content = node("div", undefined, "message-body"),
-      meta = node("div", undefined, "meta"),
-      line = node("div", undefined, "bubble-line"),
-      listen = node(
-        "button",
-        undefined,
-        "play button button--ghost button--sm button--icon-only",
-      ) as PlayButton;
-    meta.append(node("strong", m.speaker));
-    const { prose, blocks } = splitFiles(m.text);
-    // Words go in the bubble; each file gets a card of its own.
-    const said = blocks.length ? prose : m.text;
-    if (m.model) meta.append(node("span", m.model));
-    if (m.at)
-      meta.append(
-        node(
-          "time",
-          new Date(m.at).toLocaleTimeString([], {
-            hour: "2-digit",
-            minute: "2-digit",
-          }),
-        ),
-      );
-    listen.type = "button";
-    listen.message = m;
-    listen.addEventListener("click", () => void play(m));
-    showPlayState(listen);
-    line.append(bubble(said), listen);
-    content.append(meta);
-    if (said) content.append(line);
-    if (blocks.length) {
-      row.classList.add("has-files");
-      content.append(files.cards(m, blocks));
-    }
-    row.append(avatar(m.speaker), content);
-    $("transcript").append(row);
+  const list = $("transcript");
+  if (!current) {
+    list.replaceChildren();
+    return;
   }
-  if (!current.transcript.length)
-    $("transcript").append(
+  const names = [current.id, ...current.participants.map((p) => p.name)].join("\n");
+  const { transcript } = current;
+  let kept = 0;
+  if (names === rowsFor)
+    while (kept < transcript.length && list.children[kept] &&
+      rowMessages.get(list.children[kept]) === transcript[kept])
+      kept++;
+  rowsFor = names;
+  while (list.children.length > kept) list.lastElementChild!.remove();
+  for (const m of transcript.slice(kept)) {
+    const row = messageRow(m);
+    rowMessages.set(row, m);
+    list.append(row);
+  }
+  updatePlayButtons();
+  if (!transcript.length)
+    list.append(
       empty(
         "No messages yet",
         "Start the discussion, or add the first thought yourself.",
       ),
     );
-  $("transcript").scrollTop = $("transcript").scrollHeight;
+  list.scrollTop = list.scrollHeight;
+}
+function messageRow(m: Message) {
+  if (m.speaker === "Quorum" && !m.model) {
+    if (!m.links?.length) return node("p", m.text, "chip chip--sm notice-line");
+    const note = node("div", undefined, "commit-note");
+    note.append(node("p", m.text, "small"));
+    const links = node("div", undefined, "actions");
+    for (const { label, url } of m.links) {
+      // Only addresses on GitHub become links.
+      if (!url.startsWith("https://github.com/")) continue;
+      const link = node("a", label, "button button--secondary button--sm");
+      link.href = url;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      links.append(link);
+    }
+    note.append(links);
+    return note;
+  }
+  const host = m.speaker === "Host",
+    row = node("article", undefined, host ? "message host" : "message"),
+    content = node("div", undefined, "message-body"),
+    meta = node("div", undefined, "meta"),
+    line = node("div", undefined, "bubble-line"),
+    listen = node(
+      "button",
+      undefined,
+      "play button button--ghost button--sm button--icon-only",
+    ) as PlayButton;
+  meta.append(node("strong", m.speaker));
+  const { prose, blocks } = splitFiles(m.text);
+  // Words go in the bubble; each file gets a card of its own.
+  const said = blocks.length ? prose : m.text;
+  if (m.model) meta.append(node("span", m.model));
+  if (m.at)
+    meta.append(
+      node(
+        "time",
+        new Date(m.at).toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+        }),
+      ),
+    );
+  listen.type = "button";
+  listen.message = m;
+  listen.addEventListener("click", () => void play(m));
+  showPlayState(listen);
+  line.append(bubble(said), listen);
+  content.append(meta);
+  if (said) content.append(line);
+  if (blocks.length) {
+    row.classList.add("has-files");
+    content.append(files.cards(m, blocks));
+  }
+  row.append(avatar(m.speaker), content);
+  return row;
 }
 /** A message body with the tags of people in this meeting set apart. */
 function bubble(text: string) {
@@ -760,14 +856,56 @@ const mentions = createMentions({
   people: () => current?.participants ?? [],
   show: (a) => [avatar(a.name), agentInfo(a, modelLabel(a))],
 });
+createKeyRequest();
+onKeyChange(renderComposer);
+const preview = createPreviews({ node, button, request });
 const files = createFiles({
   node,
   button,
   checkbox,
   chip,
   request,
+  preview,
   meeting: () => current,
   save: () => void save(),
+});
+const next = createNext({
+  node,
+  ask: requestModel,
+  meeting: () => current,
+  busy: () => Boolean(running || recording),
+  save: () => void save(),
+  label: modelLabel,
+  anotherRound: () => void run({ oneRound: true }),
+  build: () => void run({ building: true }),
+  preview,
+  card: files.card,
+  actions: files.actions,
+});
+const repository = createRepository({
+  node,
+  button,
+  checkbox,
+  request,
+  meeting: () => current,
+  find: (id) => state.meetings.find((m) => m.id === id),
+  save: () => void save(),
+  note: (meeting, text, links) => {
+    meeting.transcript.push({
+      speaker: "Quorum",
+      text: scrub(text),
+      at: new Date().toISOString(),
+      links,
+    });
+    if (meeting === current) renderTranscript();
+    void save();
+  },
+  attach: files.attach,
+  draft: (text) => {
+    const box = $("message");
+    box.value = text;
+    box.focus();
+  },
 });
 /** The message being read aloud from its play button, if any. */
 let playback: { message: Message; ctrl: AbortController } | null = null;
@@ -856,8 +994,25 @@ function renderStatus(message = "") {
     remove.disabled = current.status === "accepted";
   $("attach").disabled = current.status === "accepted";
   $("record").disabled = current.status === "accepted" || !config.whisper;
+  renderComposer();
+  renderOrder();
+  next.render();
+  repository.render();
+}
+/** The message box also takes a key a push asked for, even in an accepted meeting. */
+function renderComposer() {
+  if (!current) return;
+  const asking = askingForKey();
+  const box = $("message");
+  box.placeholder = !asking
+    ? "Give feedback, or type @ to ask a specific agent"
+    : current.status === "accepted"
+      ? "Paste your GitHub access key here and send it"
+      : "Give feedback, or paste your GitHub access key and send it";
+  // A browser spell checker may send what it checks elsewhere.
+  box.spellcheck = !asking;
   $("message-form").querySelector<HTMLButtonElement>("button[type=submit]")!.disabled =
-    current.status === "accepted" || Boolean(recording);
+    (current.status === "accepted" && !asking) || Boolean(recording);
 }
 function clearSpeaker() {
   for (const card of $("team").children) card.classList.remove("active");
@@ -868,6 +1023,7 @@ function pause() {
   if (running) running.abort();
   running = null;
   speaker = null;
+  thinking = null;
   if (window.speechSynthesis) window.speechSynthesis.cancel();
   if (current && current.status === "running") current.status = "paused";
   clearSpeaker();
@@ -882,6 +1038,8 @@ function openMeeting(m: Meeting) {
   }
   showView("meetings");
   pause();
+  orderMeeting(m);
+  if (current !== m) closeKeyRequest();
   current = m;
   openSettings.clear();
   document.querySelector<HTMLDetailsElement>(".meeting-details")!.open = false;
@@ -901,6 +1059,8 @@ function openMeeting(m: Meeting) {
   files.renderAttachments();
   renderStatus();
   renderHistory();
+  void repository.opened(m);
+  void save();
 }
 function newMeeting() {
   if (recording) {
@@ -910,6 +1070,7 @@ function newMeeting() {
   showView("meetings");
   pause();
   current = null;
+  closeKeyRequest();
   $("new-panel").hidden = false;
   $("meeting-panel").hidden = true;
   $("meeting-form").elements.goal.focus();
@@ -917,14 +1078,16 @@ function newMeeting() {
   error();
 }
 function addMessage(speaker: string, text: string, model?: string) {
-  current!.transcript.push({
+  const message: Message = {
     speaker,
-    text,
+    text: scrub(text),
     model,
     at: new Date().toISOString(),
-  });
+  };
+  current!.transcript.push(message);
   renderTranscript();
   void save();
+  return message;
 }
 function localSpeak(text: string, voice: string, signal: AbortSignal) {
   return new Promise<void>((resolve, reject) => {
@@ -976,7 +1139,7 @@ async function speak(text: string, voice: string, signal: AbortSignal) {
     const res = await fetch("/api/speech", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ text: part, voice }),
+      body: scrub(JSON.stringify({ text: part, voice })),
       signal,
     });
     if (!res.ok)
@@ -1038,20 +1201,35 @@ async function playAudio(blob: Blob, signal: AbortSignal) {
   }
 }
 /** A just-cancelled turn can take a moment to release the model, so retry while busy. */
-async function requestTurn(data: unknown, signal: AbortSignal) {
+async function requestModel<T>(path: string, data: object, signal: AbortSignal) {
   for (let attempt = 0; ; attempt++) {
     try {
-      return await request<TurnResult>("/api/turn", "POST", data, signal);
+      return await request<T>(path, "POST", data, signal);
     } catch (e) {
       if ((e as RequestError).status !== 409 || attempt >= 10) throw e;
       await new Promise((resolve) => setTimeout(resolve, 500));
     }
   }
 }
-/** Run the discussion in rotation, or only the agents the host just tagged.
- * `asked` holds the ids of tagged agents, in order. */
-async function run(asked?: string[]) {
+/** Whether the host set the turns per run. Until then a run ends where a round does. */
+let limitChosen = false;
+$("limit").addEventListener("input", () => {
+  limitChosen = true;
+  $("limit-note").hidden = true;
+});
+interface RunPlan {
+  /** Ids of the agents the host tagged, who answer in that order. */
+  asked?: string[];
+  /** Take the remaining steps of the meeting's build. */
+  building?: boolean;
+  /** Stop once the team has been all the way round. */
+  oneRound?: boolean;
+}
+/** Run the discussion in rotation, or a queue: the tagged agents, or the build steps. */
+async function run({ asked, building, oneRound }: RunPlan = {}) {
   if (!current || running || recording || current.status === "accepted") return;
+  const build = building ? current.build : undefined;
+  if (building && (!build || build.finished)) return;
   stopPlayback();
   const m = current,
     token = ++revision,
@@ -1061,66 +1239,106 @@ async function run(asked?: string[]) {
   error();
   void save();
   renderHistory();
-  const queue = asked ? [...asked] : null;
+  // Turns in a queue leave the rotation where it was.
+  const queue: Array<{ id: string; kind?: BuildKind }> | null = asked
+    ? asked.map((id) => ({ id }))
+    : build
+      ? build.steps.slice(build.done)
+      : null;
   const limit = queue
     ? queue.length
-    : Math.min(60, Math.max(1, Math.floor(Number($("limit").value) || 12)));
+    : oneRound
+      ? // Room to finish a round already under way and, if that one falls short, the next.
+        Math.min(MAX_TURNS, 2 * m.participants.length)
+      : Math.min(MAX_TURNS, Math.max(1, Math.floor(Number($("limit").value) || 12)));
   let turns = 0,
+    // Whether the team went all the way round during this run.
+    completed = false,
     // Agents in a row with nothing new to say.
     quiet: string[] = [];
   const stalled = () => !queue && quiet.length >= m.participants.length;
+  const leaveQueue = () => {
+    queue!.shift();
+    if (build) build.done++;
+  };
   try {
-    while (token === revision && canContinue(m, turns, limit) && !stalled()) {
-      const tagged = queue && m.participants.find((p) => p.id === queue[0]);
-      // A tagged agent may have left the call while others were answering.
+    while (token === revision && (!queue || queue.length) && canContinue(m, turns, limit) && !stalled()) {
+      const tagged = queue && m.participants.find((p) => p.id === queue[0].id);
+      // A queued agent may have left the call while others were answering.
       if (queue && !tagged) {
-        queue.shift();
+        leaveQueue();
         turns++;
         continue;
       }
-      const agent = normalizeAgent(
+      const kind = queue?.[0].kind;
+      let agent = normalizeAgent(
         tagged || nextParticipant(m.participants, m.cursor ?? 0),
       );
-      /** Tagged answers leave the rotation where it was. */
-      const advance = () => {
-        if (queue) queue.shift();
-        else m.cursor = (m.cursor ?? 0) + 1;
-        turns++;
-      };
-      renderStatus(
-        agent.name + " is thinking · " + (turns + 1) + " / " + limit,
-      );
+      if (kind) agent = buildAgent(agent, kind);
       const turn = new AbortController(),
         signal = AbortSignal.any([ctrl.signal, turn.signal]);
       speaker = { id: agent.id, turn };
+      thinking = queue ? null : agent.id;
+      renderStatus(
+        build
+          ? "Build step " + (build.done + 1) + " of " + build.steps.length + " · " + agent.name + " is working"
+          : agent.name + " is thinking · " + (turns + 1) + " / " + limit,
+      );
       clearSpeaker();
       [...($("team").children as HTMLCollectionOf<HTMLElement>)]
         .find((el) => el.dataset.agent === agent.id)
         ?.classList.add("active");
-      const context = turnContext(m);
+      const context = {
+        ...turnContext(m),
+        ...(kind ? { task: buildTask(kind, canCreateFiles(agent)) } : {}),
+      };
       let result;
       try {
-        result = await requestTurn({ agent, meeting: context }, signal);
+        result = await requestModel<TurnResult>("/api/turn", { agent, meeting: context }, signal);
       } catch (e) {
         if (turn.signal.aborted && !ctrl.signal.aborted) continue;
         throw e;
       }
       if (token !== revision || ctrl.signal.aborted) break;
       if (turn.signal.aborted) continue;
+      // Whether this turn was the last of the rotation's order, and whether all had spoken.
+      let wrapped = false,
+        full = false;
+      const advance = (spoke: boolean) => {
+        turns++;
+        thinking = null;
+        if (queue) return leaveQueue();
+        // Passing counts for an agent that has already had its say.
+        full = advanceRound(m, agent.id, spoke || m.transcript.some((x) => x.speaker === agent.name));
+        completed ||= full;
+        wrapped = (m.cursor ?? 0) % m.participants.length === 0;
+      };
+      /** By default a run stops after a round when another would not fit the turn budget. */
+      const roundEndsRun = () =>
+        oneRound ? full : wrapped && !limitChosen && turns + m.participants.length > limit;
       if (result.skipped) {
         quiet.push(agent.name);
-        advance();
+        advance(false);
+        if (build) addMessage("Quorum", agent.name + " had nothing new to add to the build.");
         void save();
+        if (roundEndsRun()) break;
         continue;
       }
       quiet = [];
-      addMessage(
+      // Advanced first, so the room is drawn with the following speaker.
+      advance(true);
+      const reply = addMessage(
         agent.name,
         result.text,
         names[agent.provider] + (result.model ? " / " + result.model : ""),
       );
-      advance();
-      void save();
+      // Files from an agent that was not allowed to send them are never committed unasked.
+      if (!canCreateFiles(agent)) {
+        reply.unasked = true;
+        void save();
+      }
+      renderOrder();
+      void repository.afterTurn(m);
       if ($("voice-output").checked) {
         renderStatus(agent.name + " is speaking");
         try {
@@ -1131,6 +1349,7 @@ async function run(asked?: string[]) {
       }
       if (agent.provider === "demo")
         await new Promise((resolve) => setTimeout(resolve, 600));
+      if (roundEndsRun()) break;
     }
   } catch (e) {
     if (token === revision && !ctrl.signal.aborted) error((e as Error).message);
@@ -1138,19 +1357,30 @@ async function run(asked?: string[]) {
     if (token === revision) {
       running = null;
       speaker = null;
+      thinking = null;
       if (m.status === "running") m.status = "paused";
       clearSpeaker();
+      if (build && build.done >= build.steps.length) {
+        build.finished = true;
+        addMessage("Quorum", "Build finished.");
+      }
       const nothingNew = quiet.length
         ? [...new Set(quiet)].join(", ") + " had nothing new to add. "
         : "";
       renderStatus(
-        stalled()
-          ? "Nobody has anything new to add. Give them direction, tag someone with @, or accept the outcome."
-          : queue
-            ? nothingNew + "Continue when ready."
-            : turns >= limit
-              ? nothingNew + "Turn budget reached. Accept the outcome or continue."
-              : "Paused.",
+        build
+          ? build.finished
+            ? "Build finished. The result is below."
+            : "The build stopped. Continue it when you are ready."
+          : stalled()
+            ? "Nobody has anything new to add. Give them direction, tag someone with @, or accept the outcome."
+            : queue
+              ? nothingNew + "Continue when ready."
+              : completed
+                ? nothingNew + "Round complete. Choose what happens next, below."
+                : turns >= limit
+                  ? nothingNew + "Turn budget reached. Accept the outcome or continue."
+                  : "Paused.",
       );
       renderHistory();
       void save();
@@ -1161,14 +1391,15 @@ $("agent-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   error();
   $("create-status").textContent = "";
-  const f = e.currentTarget as Elements["agent-form"],
-    data = new FormData(f);
+  const f = e.currentTarget as Elements["agent-form"];
+  const keyed = takeKeysFrom(f, ["name", "instructions", "model", "skillText"]);
+  const data = new FormData(f);
   try {
     const skills = [...pendingSkills];
     for (const file of f.elements.skills.files!) {
       if (file.size > MAX_SKILL_CHARS)
         throw new Error("Skill files must be under 32 KB.");
-      skills.push({ name: file.name, text: await file.text() });
+      skills.push(withoutKeys({ name: file.name, text: await file.text() }));
     }
     if (String(data.get("skillText")).trim())
       skills.push({ name: "Custom skill", text: data.get("skillText") as string });
@@ -1195,12 +1426,25 @@ $("agent-form").addEventListener("submit", async (e) => {
     syncChoices();
     $("create-agent").close();
     renderAgents();
+    if (keyed) error("A GitHub key was left out of the agent.");
     await save();
   } catch (e) {
     // The toast sits behind an open dialog, so say it inside.
     $("create-status").textContent = (e as Error).message;
   }
 });
+/** Take any GitHub key out of named fields before they are read. @returns whether one was there */
+function takeKeysFrom(form: HTMLFormElement, names: string[]) {
+  let found = false;
+  for (const name of names) {
+    const field = form.elements.namedItem(name) as HTMLInputElement;
+    const taken = intercept(field.value);
+    if (!taken.found) continue;
+    field.value = taken.text;
+    found = true;
+  }
+  return found;
+}
 /** Whether the host has set the files switch of the agent being created. */
 let filesChosen = false;
 /** Until then, the switch shows what the name and skills would give. */
@@ -1223,15 +1467,15 @@ $("agent-form").elements.provider.addEventListener("change", (e) => {
 $("meeting-form").addEventListener("submit", (e) => {
   e.preventDefault();
   error();
-  const f = e.currentTarget as HTMLFormElement,
-    d = new FormData(f),
+  const f = e.currentTarget as HTMLFormElement;
+  const keyed = takeKeysFrom(f, ["goal", "description", "agenda"]);
+  const d = new FormData(f),
     ids = d.getAll("agent");
   if (!ids.length) {
     error("Choose at least one agent.");
     return;
   }
-  const participants = state.agents
-    .filter((a) => ids.includes(a.id))
+  const participants = inTeamOrder(state.agents.filter((a) => ids.includes(a.id)))
     .map((a) => structuredClone(a));
   if (participants.length > MAX_PARTICIPANTS) {
     error("Choose at most 12 participants.");
@@ -1246,6 +1490,7 @@ $("meeting-form").addEventListener("submit", (e) => {
     participants,
     transcript: [],
     cursor: 0,
+    ordered: true,
     status: "paused",
     mode: d.get("mode") === "voice" ? "voice" : "chat",
   };
@@ -1256,6 +1501,12 @@ $("meeting-form").addEventListener("submit", (e) => {
   }
   state.meetings.push(m);
   openMeeting(m);
+  if (keyed)
+    addMessage(
+      "Quorum",
+      "A GitHub key was left out of the meeting details." +
+        (heldKey() ? " It is held for this session." : ""),
+    );
   f.reset();
   syncChoices();
   filterInvite();
@@ -1264,16 +1515,32 @@ $("meeting-form").addEventListener("submit", (e) => {
 });
 $("message-form").addEventListener("submit", (e) => {
   e.preventDefault();
-  if (!current || recording || current.status === "accepted") return;
+  if (!current || recording) return;
+  const accepted = current.status === "accepted";
+  if (accepted && !askingForKey()) return;
   const input = (e.currentTarget as Elements["message-form"]).elements.message,
-    text = input.value.trim();
-  if (!text) return;
+    typed = input.value.trim();
+  if (!typed) return;
   mentions.close();
+  // Before anything else sees the message, any key in it is taken out and held.
+  const { text, key, found } = intercept(typed, true);
+  if (found) {
+    input.value = "";
+    // A key alone changes nothing about the discussion, and no agent answers it.
+    if (key && !accepted) addMessage("Quorum", "GitHub key received, held for this session.");
+  }
+  if (accepted) {
+    // The rest of the message is left for the host to keep.
+    input.value = text;
+    if (text) renderStatus("The meeting is accepted, so only a key can be sent. Nothing was posted.");
+    return;
+  }
+  if (!text) return;
   pause();
   addMessage("Host", text);
   input.value = "";
   const asked = findMentions(text, current.participants);
-  if (asked.length) void run(asked.map((a) => a.id));
+  if (asked.length) void run({ asked: asked.map((a) => a.id) });
   else renderStatus("Feedback added. Continue when ready.");
 });
 $("resume").addEventListener("click", () => void run());
@@ -1336,7 +1603,8 @@ $("record").addEventListener("click", async () => {
         });
         const data = (await res.json()) as { text: string; error?: string };
         if (!res.ok) throw new Error(data.error);
-        if (current === m) $("message-form").elements.message.value = data.text;
+        const said = intercept(data.text).text;
+        if (current === m) $("message-form").elements.message.value = said;
       } catch (e) {
         error((e as Error).message);
       } finally {
@@ -1359,7 +1627,7 @@ $("record").addEventListener("click", async () => {
 async function init() {
   try {
     [state, config] = await Promise.all([
-      request<State>("/api/state"),
+      request<State>("/api/state").then(withoutKeys),
       request<Config>("/api/config"),
     ]);
     stateVersion = state._revision ?? 0;
@@ -1387,7 +1655,10 @@ async function init() {
       void save();
     }
     assignVoices(state.agents);
-    for (const m of state.meetings) assignVoices(m.participants, state.agents);
+    for (const m of state.meetings) {
+      assignVoices(m.participants, state.agents);
+      orderMeeting(m);
+    }
     state.initialized = true;
     void save();
     for (const m of state.meetings)
@@ -1434,7 +1705,8 @@ function mergeSkills(existing: Skill[], added: Skill[]) {
     throw new Error("An agent can have at most " + MAX_SKILLS + " skills.");
   return [...merged.values()];
 }
-async function addImportedSkills(target: string, skills: Skill[]) {
+async function addImportedSkills(target: string, imported: Skill[]) {
+  const skills = withoutKeys(imported);
   const agent = state.agents.find((a) => a.id === target);
   if (!agent) {
     pendingSkills = mergeSkills(pendingSkills, skills);
@@ -1450,7 +1722,7 @@ async function addImportedSkills(target: string, skills: Skill[]) {
 async function addImportedAgents(profiles: ImportedProfile[], provider: string) {
   let added = 0,
     updated = 0;
-  for (const profile of profiles) {
+  for (const profile of withoutKeys(profiles)) {
     const existing = state.agents.find(
       (a) => a.source === profile.source && a.importedName === profile.name,
     );
@@ -1822,36 +2094,44 @@ $("install-model-form").addEventListener("submit", async (e) => {
   }
 });
 
+/** Take the server's state after it added agents, and point the page at its objects. */
+function adoptState(next: State) {
+  state = withoutKeys(next);
+  stateVersion = state._revision ?? 0;
+  for (const meeting of state.meetings) orderMeeting(meeting);
+  if (current)
+    current =
+      state.meetings.find((meeting) => meeting.id === current!.id) ?? null;
+  assignVoices(state.agents);
+  renderAgents();
+  // The history list and the open room must point at the new meeting objects.
+  renderHistory();
+  if (current) {
+    renderTeam();
+    renderTranscript();
+    files.renderAttachments();
+    renderStatus();
+  }
+}
 // Flush pending edits before merging the server's current state with the curated team.
+async function addFromServer<T extends { state: State }>(path: string, data: object) {
+  if (running || recording)
+    throw new Error(
+      "Pause the meeting and finish recording before adding agents.",
+    );
+  await saveQueue;
+  const result = await request<T>(path, "POST", data);
+  adoptState(result.state);
+  await save();
+  return result;
+}
 $("starter-team").addEventListener("click", async () => {
   $("starter-team").disabled = true;
   try {
-    if (running || recording)
-      throw new Error(
-        "Pause the meeting and finish recording before adding the starter team.",
-      );
-    await saveQueue;
-    const result = await request<{ state: State; added: number }>(
+    const result = await addFromServer<{ state: State; added: number }>(
       "/api/agents/starter-team",
-      "POST",
       {},
     );
-    state = result.state;
-    stateVersion = state._revision ?? 0;
-    if (current)
-      current =
-        state.meetings.find((meeting) => meeting.id === current!.id) ?? null;
-    assignVoices(state.agents);
-    renderAgents();
-    // The history list and the open room must point at the new meeting objects.
-    renderHistory();
-    if (current) {
-      renderTeam();
-      renderTranscript();
-      files.renderAttachments();
-      renderStatus();
-    }
-    await save();
     $("starter-team-status").textContent =
       result.added +
       (result.added === 1 ? " agent" : " agents") +
@@ -1860,6 +2140,32 @@ $("starter-team").addEventListener("click", async () => {
     error((err as Error).message);
   } finally {
     $("starter-team").disabled = false;
+  }
+});
+$("invite-team").addEventListener("click", async () => {
+  $("invite-team").disabled = true;
+  error();
+  try {
+    const result = await addFromServer<{ state: State; team: string[]; added: string[] }>(
+      "/api/agents/product-team",
+      { provider: preferredProvider },
+    );
+    for (const input of $("invite").querySelectorAll("input"))
+      input.checked = result.team.includes(input.value);
+    syncChoices();
+    updateInviteSelection();
+    const invited = result.team
+      .map((id) => state.agents.find((a) => a.id === id)?.name)
+      .join(", ");
+    $("team-status").textContent =
+      "Selected " + invited + "." +
+      (result.added.length
+        ? " Added to your agents: " + result.added.join(", ") + ". Check their models on the Agents page."
+        : "");
+  } catch (err) {
+    error((err as Error).message);
+  } finally {
+    $("invite-team").disabled = false;
   }
 });
 

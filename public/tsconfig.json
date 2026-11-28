@@ -9,7 +9,11 @@
       "/engine.js": ["../src/engine.ts"],
       "/import.js": ["./import.ts"],
       "/mentions.js": ["./mentions.ts"],
-      "/files.js": ["./files.ts"]
+      "/files.js": ["./files.ts"],
+      "/preview.js": ["./preview.ts"],
+      "/next.js": ["./next.ts"],
+      "/key.js": ["./key.ts"],
+      "/repository.js": ["./repository.ts"]
     }
   },
   "include": ["*.ts"]
