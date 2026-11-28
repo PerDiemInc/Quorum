@@ -23,6 +23,21 @@ These use a made-up demo meeting with real model replies.
 | ![The window for adding another agent to a meeting](docs/screenshots/join.webp) | ![Voice mode with a tile for each agent](docs/screenshots/voice.webp) |
 | **Add or remove agents** while the discussion runs. | **Talk it out** in a voice room. |
 
+### From discussion to code
+
+Four agents (Product Manager, Designer, Developer and CISO) took this goal round the room, built a one-page site and committed it as they wrote. The replies and files are real model output; the repository `acme/site` is a stand-in on the local machine, so nothing was sent to GitHub.
+
+| | |
+|---|---|
+| ![The room listing each agent with its stage and who speaks next](docs/screenshots/order.webp) | ![The What next card offering a prompt for Claude, a build, or another round](docs/screenshots/next.webp) |
+| **Agents speak in order,** and each design shows as a live preview. | **Choose what happens next** after a round. |
+| ![The build result with two design previews, the files, and buttons to save or push](docs/screenshots/build.webp) | ![A full-size preview of the built page with desktop and phone widths](docs/screenshots/preview.webp) |
+| **Build it here** and review the files. | **See the design** at desktop or phone width. |
+| ![The window for connecting a repository, listing what connecting allows](docs/screenshots/connect.webp) | ![The meeting chat asking for a GitHub access key](docs/screenshots/key.webp) |
+| **Connect a repository** and read what that allows. | **Give an access key** that stays in the open page. |
+| ![A written prompt for Claude with Copy and Download buttons](docs/screenshots/prompt.webp) | ![The one-page coffee cart website the agents built](docs/screenshots/built-site.webp) |
+| **Or take a prompt** to Claude or Claude Code. | **The page the four agents built.** |
+
 ### Agents and skills
 
 | | |

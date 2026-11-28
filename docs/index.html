@@ -4,9 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Quorum: put your AI team in a room</title>
-<meta name="description" content="Quorum is a local-first meeting room where AI agents debate your goal out loud, in their own voices. Only you can accept the outcome.">
+<meta name="description" content="Quorum is a local-first meeting room where AI agents take turns on your goal, then write a prompt for Claude or build the files with you. Only you can accept the outcome.">
 <meta property="og:title" content="Quorum: put your AI team in a room">
-<meta property="og:description" content="AI agents debate your goal out loud, in their own voices. You make the call.">
+<meta property="og:description" content="AI agents take turns on your goal, then write a prompt for Claude or build the files. You make the call.">
 <meta property="og:url" content="https://perdieminc.github.io/Quorum/">
 <meta property="og:image" content="https://perdieminc.github.io/Quorum/screenshots/meeting.webp">
 <meta name="theme-color" content="#050508">
@@ -41,6 +41,8 @@
   --pad: clamp(20px, 5vw, 64px);
   --bar: 68px;
   --ease: cubic-bezier(.22, 1, .36, 1);
+  /* How tall a screen may be for its width when it is cropped on a narrow screen. */
+  --tall: .85;
   /* Glass: a lit top edge, a faint body and a soft shadow. */
   --glass: linear-gradient(180deg, #ffffff17, #ffffff08);
   --rim: inset 0 1px 0 #ffffff2e, inset 0 0 0 1px #ffffff12;
@@ -83,7 +85,7 @@ nav ul a[aria-current="true"]::before { opacity: 1; transform: none; }
 .button.solid:hover { box-shadow: inset 0 -1px 0 #0000001a, 0 16px 44px -6px #b678ff99, 0 0 0 4px #ffffff1f; }
 .button.glass { background: var(--glass); color: #fff; box-shadow: var(--rim); backdrop-filter: blur(18px) saturate(160%); -webkit-backdrop-filter: blur(18px) saturate(160%); }
 .button.glass:hover { background: #ffffff24; }
-nav > .button.small { min-height: 44px; }
+nav > .button.small, .terminal .button.small { min-height: 44px; }
 .button.small { min-height: 30px; min-width: 0; padding: 6px 14px; font-size: 12px; }
 .actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 14px; }
 
@@ -106,15 +108,17 @@ nav > .button.small { min-height: 44px; }
 @keyframes aurora { from { transform: translate(-3%, 1%) scale(1); } to { transform: translate(3%, -3%) scale(1.1); } }
 .halo { --rest: 59deg; position: absolute; left: 50%; top: 46%; z-index: -2; width: max(108vw, 820px); aspect-ratio: 1; translate: -50% -50%; transform: perspective(1400px) rotateX(var(--tilt, var(--rest))) scale(var(--zoom, 1)); will-change: transform; pointer-events: none; -webkit-mask: linear-gradient(#000 44%, #0000004d 84%); mask: linear-gradient(#000 44%, #0000004d 84%); }
 .halo::before { content: ""; position: absolute; inset: 0; border-radius: 50%; background: conic-gradient(from 40deg, var(--host), var(--design), var(--ops), var(--lead), var(--finance), var(--host)); -webkit-mask: radial-gradient(closest-side, transparent 50%, #000 67%, #000 69%, transparent 97%); mask: radial-gradient(closest-side, transparent 50%, #000 67%, #000 69%, transparent 97%); opacity: .62; }
-.halo::after { content: ""; position: absolute; inset: 16%; border-radius: 50%; border: 1.5px solid #ffffff8c; box-shadow: 0 0 24px #ffffff59, inset 0 0 24px #ffffff40; }
+/* The thin line of light, with its glow. It fades out where it would run through the headline. */
+.halo::after { content: ""; position: absolute; inset: calc(16% - 28px); border-radius: 50%; background: radial-gradient(closest-side, transparent calc(100% - 54px), #ffffff12 calc(100% - 40px), #ffffff45 calc(100% - 30px), #ffffff9e calc(100% - 29px), #ffffff9e calc(100% - 28px), #ffffff50 calc(100% - 27px), #ffffff14 calc(100% - 14px), transparent calc(100% - 2px)); -webkit-mask: linear-gradient(#000 calc(var(--clear-from, 200%) - 6%), #0000 var(--clear-from, 200%), #0000 var(--clear-to, 200%), #000 calc(var(--clear-to, 200%) + 9%)); mask: linear-gradient(#000 calc(var(--clear-from, 200%) - 6%), #0000 var(--clear-from, 200%), #0000 var(--clear-to, 200%), #000 calc(var(--clear-to, 200%) + 9%)); }
 .motion .halo::before { animation: spin 60s linear infinite; }
 @keyframes spin { to { transform: rotate(1turn); } }
 h1 { margin-block: auto 0; font-size: clamp(60px, min(12.2vw, 22svh), 210px); line-height: .92; letter-spacing: -.025em; }
 /* The padding gives the gradient room to reach descenders and the last letter; the margin takes the space back. */
 h1 span { display: inline-block; padding: 0 .08em .24em; margin: 0 -.08em -.24em; background: linear-gradient(180deg, #fff 42%, #c3bdea); -webkit-background-clip: text; background-clip: text; color: transparent; will-change: transform; }
-.lede { max-width: 31em; margin-bottom: auto; color: #ececf1; font-size: clamp(18px, 1.75vw, 23px); line-height: 1.45; letter-spacing: -.01em; text-wrap: balance; text-shadow: 0 1px 18px var(--void), 0 0 4px var(--void); }
+.lede { max-width: 31em; margin-top: clamp(0px, 1.4svh, 18px); margin-bottom: auto; color: #ececf1; font-size: clamp(18px, 1.75vw, 23px); line-height: 1.45; letter-spacing: -.01em; text-wrap: balance; text-shadow: 0 1px 18px var(--void), 0 0 4px var(--void); }
 .hint { color: #e4e4e7; font-size: 13px; text-shadow: 0 0 8px #000, 0 0 8px #000; }
-.hint::after { content: ""; display: block; width: 1px; height: 28px; margin: 6px auto 0; background: linear-gradient(#fff, transparent); animation: drop 2.2s var(--ease) infinite; }
+.hint::after { content: ""; display: block; width: 1px; height: 28px; margin: 6px auto 0; background: linear-gradient(#fff, transparent); }
+.motion .hint::after { animation: drop 2.2s var(--ease) infinite; }
 @keyframes drop { 0% { transform: scaleY(0); transform-origin: top; } 50% { transform: scaleY(1); transform-origin: top; } 51% { transform-origin: bottom; } 100% { transform: scaleY(0); transform-origin: bottom; } }
 
 /* 2. The meeting: scrolling passes the floor around the table. */
@@ -181,7 +185,48 @@ h1 span { display: inline-block; padding: 0 .08em .24em; margin: 0 -.08em -.24em
 .motion .features > li.on figure { opacity: 1; transform: none; }
 .motion .reel .pin { perspective: 1600px; }
 
-/* 5. Sideways. */
+/* 5. After the talk: the speaking order as a track of light, then what the room can do with it. */
+.relay { --length: 360vh; }
+.order { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; width: min(900px, 100%); margin: 0; padding: 0; list-style: none; }
+.order li { position: relative; display: flex; align-items: flex-start; justify-content: center; padding-top: 13px; color: #f4f4f5; font: 600 13px/1.25 var(--text); text-align: center; transition: color .5s var(--ease); }
+.order li::before { content: ""; position: absolute; inset: 0 0 auto; height: 5px; border-radius: 99px; background: var(--c); box-shadow: 0 0 16px color-mix(in oklab, var(--c) 75%, transparent); transition: opacity .5s var(--ease), box-shadow .5s var(--ease), transform .6s var(--ease); }
+.motion .order li[data-state="idle"] { color: #8e8e98; }
+.motion .order li[data-state="idle"]::before { opacity: .25; box-shadow: none; }
+.motion .order li[data-state="now"]::before { transform: scaleY(1.7); box-shadow: 0 0 10px var(--c), 0 0 34px var(--c); }
+/* The way back to the start. */
+.again { display: flex; justify-content: center; width: min(720px, 80%); height: 14px; margin-top: -14px; border: 1px solid #ffffff40; border-top: 0; border-radius: 0 0 18px 18px; transition: border-color .5s var(--ease), box-shadow .5s var(--ease); }
+.again span { align-self: flex-end; translate: 0 50%; padding: 0 12px; background: var(--void); color: var(--haze); font-size: 12px; line-height: 1.3; white-space: nowrap; transition: color .5s var(--ease); }
+.again.lit { border-color: #ffffffb3; box-shadow: 0 12px 26px -14px #fff; }
+.again.lit span { color: #fff; }
+.relay h2 { font-size: clamp(30px, min(5vw, 7svh), 68px); }
+.relay .features { margin-block: 8px 0; }
+.standin { position: relative; z-index: 1; max-width: 46em; color: var(--haze); font-size: 12px; line-height: 1.45; text-wrap: balance; }
+.motion .relay .features figure { width: min(100%, calc((100svh - 350px) * 1.6)); }
+.motion .relay .pin { gap: 12px; perspective: 1600px; }
+
+#made { background: radial-gradient(48% 40% at 50% 60%, #ff8a3d1f, transparent 74%); }
+#made figure, .proof figure { overflow: hidden; border: 1px solid transparent; border-radius: clamp(14px, 1.8vw, 26px); background: linear-gradient(var(--carbon), var(--carbon)) padding-box, linear-gradient(165deg, #ffffff73, #ffffff14 30%, #ffffff0a 62%, var(--c)) border-box; box-shadow: 0 50px 120px -20px #000, 0 0 110px color-mix(in oklab, var(--c) 20%, transparent); }
+#made figure { width: min(960px, 100%); margin-top: 16px; }
+#github { background: radial-gradient(60% 30% at 50% 12%, #22c8ff1f, transparent 72%), radial-gradient(60% 34% at 50% 78%, #7c5cff24, transparent 74%); }
+.chapter > .note { max-width: 46em; color: var(--haze); font-size: 14px; }
+/* Where commits go: the default beside the choice you have to make. */
+.routes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; width: min(1000px, 100%); margin-top: 20px; text-align: left; }
+.route { --c: var(--finance); display: flex; flex-direction: column; gap: 10px; padding: 30px; border: 1px solid transparent; border-radius: 30px; background: linear-gradient(#0b0b12, #0b0b12) padding-box, linear-gradient(160deg, var(--c), #ffffff14 42%, #ffffff0a 70%, color-mix(in oklab, var(--c) 55%, transparent)) border-box; box-shadow: 0 0 90px color-mix(in oklab, var(--c) 18%, transparent); }
+.route.direct { --c: var(--ops); }
+.route .tag { align-self: flex-start; padding: 3px 12px; border-radius: 99px; background: var(--c); color: #050508; font: 700 12px/1.6 var(--text); }
+.route p { color: #c4c4cc; font-size: 16px; }
+.route .path { color: #fff; font: 600 clamp(14px, 1.6vw, 17px)/1.5 ui-monospace, "SF Mono", Menlo, monospace; overflow-wrap: anywhere; }
+.proof { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 28px; width: min(1000px, 100%); margin-top: 28px; }
+.proof > div { --c: var(--host); display: flex; flex-direction: column; }
+.proof > div + div { --c: var(--design); }
+.proof figure img { width: 100%; aspect-ratio: 1; object-fit: cover; object-position: var(--at, 50% 50%); }
+.proof p { padding-top: 14px; color: var(--haze); font-size: 15px; }
+.bento.facts { width: min(1000px, 100%); margin-top: 28px; }
+.facts .tile { grid-column: span 6; justify-content: flex-start; min-height: 0; color: #fff; background: var(--glass); box-shadow: var(--rim); }
+.facts .tile p { color: #c4c4cc; }
+@media (hover: hover) { .facts .tile:hover { box-shadow: var(--rim), 0 30px 60px -24px #000; } }
+
+/* 6. Sideways. */
 .sideways { --length: 200vh; }
 .sideways .pin { gap: clamp(14px, 3vh, 36px); padding-inline: 0; }
 .sideways h2 { padding-inline: var(--pad); }
@@ -195,6 +240,7 @@ h1 span { display: inline-block; padding: 0 .08em .24em; margin: 0 -.08em -.24em
 .track figure.tall img { border: 9px solid #17171c; border-radius: 40px; box-shadow: 0 0 0 1px #ffffff38, 0 30px 80px #000; }
 figcaption { padding-top: 14px; color: var(--haze); font-size: 15px; text-align: center; }
 
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 section.chapter { display: flex; flex-direction: column; align-items: center; gap: 20px; padding: clamp(80px, 11vw, 150px) var(--pad); text-align: center; }
 .chapter > p { max-width: 36em; font-size: clamp(18px, 1.7vw, 21px); letter-spacing: -.01em; text-wrap: balance; }
 .light { margin-inline: clamp(0px, 1vw, 14px); border-radius: clamp(28px, 4vw, 56px); color: var(--ink); background:
@@ -222,7 +268,9 @@ section.chapter { display: flex; flex-direction: column; align-items: center; ga
 
 .terminal { width: min(760px, 100%); margin-top: 28px; border: 1px solid transparent; border-radius: 26px; background: linear-gradient(#0b0b12, #0b0b12) padding-box, linear-gradient(160deg, #ffffff66, #ffffff12 35%, #22c8ff80) border-box; text-align: left; overflow: hidden; box-shadow: 0 40px 120px -20px #000, 0 0 110px #22c8ff26; }
 .terminal header { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 16px 12px 22px; border-bottom: 1px solid #ffffff14; font-size: 13px; color: var(--haze); }
-.terminal pre { margin: 0; padding: 22px; overflow-x: auto; font: 14px/1.9 ui-monospace, "SF Mono", Menlo, monospace; color: #e4e4e7; }
+.terminal pre { margin: 0; padding: 22px; white-space: pre-wrap; overflow-wrap: anywhere; font: 14px/1.9 ui-monospace, "SF Mono", Menlo, monospace; color: #e4e4e7; }
+/* A long command wraps under itself, so none of it is out of sight. */
+.terminal code span { display: block; padding-left: 2ch; text-indent: -2ch; }
 .fine { max-width: 46em; font-size: 14px !important; }
 /* Where you are inside a scene, and the way out of it. */
 .rail { display: none; flex-wrap: wrap; justify-content: center; align-items: center; gap: 0 14px; padding: 0 12px; border-radius: 99px; background: var(--glass); box-shadow: var(--rim); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); font-size: 13px; color: #d4d4d8; }
@@ -246,6 +294,12 @@ section.chapter { display: flex; flex-direction: column; align-items: center; ga
   .motion .caption { min-height: 0; margin-block: 0; }
   .motion .caption p { font-size: 13px; line-height: 1.4; }
   .motion .features figure { width: min(100%, calc((100svh - 290px) * 1.6)); }
+  /* The room at the top keeps the heading out of the navigation's shadow. */
+  .motion .relay .pin { gap: 8px; padding-block: 24px 8px; }
+  .motion .relay h2 { font-size: clamp(22px, 5svh, 32px); }
+  .motion .relay .again { margin-top: -8px; }
+  .motion .relay .features figure { width: min(100%, calc((100svh - 316px) * 1.6)); }
+  .motion .relay .features > li p { line-height: 1.4; }
 }
 
 footer { padding: 40px var(--pad) 56px; border-top: 1px solid #ffffff14; color: var(--haze); font-size: 13px; text-align: center; }
@@ -269,22 +323,76 @@ footer { padding: 40px var(--pad) 56px; border-top: 1px solid #ffffff14; color: 
   .rail { gap: 0 8px; border-radius: 26px; }
   .rail .dots button { width: 30px; }
   /* On a narrow screen one step shows at a time, above its screen. */
-  .motion .features { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto; row-gap: 24px; }
+  .motion .features { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, calc((100vw - 2 * var(--pad)) * var(--tall))); row-gap: 20px; }
   .motion .features > li > div { grid-column: 1; grid-row: 1; opacity: 0; text-align: center; }
   .motion .features > li.on > div { opacity: 1; }
   .motion .features h3::before { margin-inline: auto; }
   .motion .features > li p { margin-inline: auto; }
-  .motion .features figure { grid-column: 1; grid-row: 2; }
+  /* The screen takes the height that is left, and shows its busiest part large enough to read. */
+  .motion .features figure, .motion .relay .features figure { position: relative; grid-column: 1; grid-row: 2; align-self: stretch; width: 100%; min-height: 0; }
+  .motion .features figure img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: var(--at, 50% 50%); }
+  .facts .tile { grid-column: span 12; }
+  /* The room and the gallery are cropped the same way. */
+  .motion .lift .shot { width: 100%; }
+  .motion .lift .shot img, .motion .track figure:not(.tall) img { width: 100%; height: min(calc(100svh - 330px), calc((100vw - 2 * var(--pad)) * var(--tall))); object-fit: cover; object-position: var(--at, 50% 50%); }
+  .motion .track figure:not(.tall) { width: calc(100vw - 2 * var(--pad)); }
+  .order { gap: 4px; }
+  .order li { font-size: 11px; }
+  .again { height: 10px; margin-top: -2px; }
+  .tile, .tile.half { min-height: 0; padding: 26px; }
+  .big { margin-bottom: 12px; }
   .halo { --rest: 44deg; top: 42%; width: max(130vw, 820px); }
+}
+@media (max-width: 760px) {
+  .routes, .proof { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 600px) {
+  :root { --tall: 1.2; }
+  .features > li figure img { aspect-ratio: 1; width: 100%; object-fit: cover; object-position: var(--at, 50% 50%); }
+  .rail .where { flex-basis: 100%; min-width: 0; padding-top: 8px; line-height: 1; text-align: center; }
+  .terminal pre { padding: 18px 14px; font-size: 11px; }
+  #made figure img { width: 100%; aspect-ratio: 1; object-fit: cover; }
+}
+/* A short phone gives the screen every line it can spare. */
+@media (max-width: 600px) and (max-height: 700px) {
+  .motion .relay .pin, .motion .reel .pin { gap: 6px; padding-block: 6px; }
+  .motion .relay .pin { padding-top: 22px; }
+  .motion .relay .again { margin-top: -2px; }
+  .motion .relay h2 { font-size: 24px; }
+  .motion .features { row-gap: 8px; }
+  .motion .features > li > div { padding: 0; }
+  .motion .features > li > div h3::before { display: none; }
+  .motion .features > li p { font-size: 13px; line-height: 1.35; }
+  .motion .relay .standin { font-size: 11px; line-height: 1.35; }
+  .motion .rail .where { padding-top: 6px; }
+}
+/* The smallest phones: the opening still fits on one screen. */
+@media (max-width: 600px) and (max-height: 620px) {
+  .hero .pin { gap: 8px; padding-block: 8px; }
+  h1 { font-size: 48px; }
+  .lede { margin-top: 0; font-size: 15px; line-height: 1.4; }
+  .actions { gap: 8px; }
+  .hero .button { min-height: 44px; }
+  .hint { display: none; }
+}
+@media (max-width: 340px) {
+  nav ul a { padding: 0 5px; }
+}
+@media (max-width: 420px) {
+  /* The mark stands for the name, which leaves room for five links. */
+  nav .brand { justify-content: center; min-width: 44px; font-size: 0; gap: 0; }
+  nav .brand svg { width: 22px; height: 22px; }
+  nav { padding-left: 4px; }
 }
 </style>
 </head>
 <body>
 <a class="skip" href="#main">Skip to content</a>
 <nav aria-label="Main">
-  <a class="brand" href="#main"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="6" r="4" fill="#b678ff"/><circle cx="6" cy="17" r="4" fill="#22c8ff"/><circle cx="18" cy="17" r="4" fill="#ff8a3d"/></svg>Quorum</a>
+  <a class="brand" href="#main" aria-label="Quorum, back to the top"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="6" r="4" fill="#b678ff"/><circle cx="6" cy="17" r="4" fill="#22c8ff"/><circle cx="18" cy="17" r="4" fill="#ff8a3d"/></svg>Quorum</a>
   <ul>
     <li><a href="#meeting">Hear it</a></li>
+    <li><a href="#build">Build</a></li>
     <li><a href="#features">Features</a></li>
     <li><a href="#local">Models</a></li>
     <li><a href="#start">Run it</a></li>
@@ -299,7 +407,7 @@ footer { padding: 40px var(--pad) 56px; border-top: 1px solid #ffffff14; color: 
       <div class="sun" aria-hidden="true"></div>
       <div class="halo" id="halo" aria-hidden="true"></div>
       <h1><span>Let</span> <span>them</span> <span>argue.</span></h1>
-      <p class="lede">Quorum seats your AI specialists around one goal. They take turns, out loud, each in a voice of its own. You decide when it is settled.</p>
+      <p class="lede">In Quorum, your AI specialists take turns on one goal, out loud if you like. Then take a prompt to Claude, or build it right there. You decide when it is settled.</p>
       <div class="actions">
         <a class="button solid" href="#meeting" id="hear">Hear a meeting</a>
         <a class="button glass" href="#start">Run it yourself</a>
@@ -332,27 +440,109 @@ footer { padding: 40px var(--pad) 56px; border-top: 1px solid #ffffff14; color: 
   <section class="scene lift" data-scene="lift" id="shot">
     <div class="pin">
       <h2>This is the room.</h2>
-      <div class="shot" id="lift-shot"><img src="screenshots/meeting.webp" width="2000" height="1250" alt="A Quorum meeting about a reusable cup program, with replies from Product Lead, Designer, Operations and Finance beside the list of who is in the room"></div>
+      <div class="shot" id="lift-shot" style="--at: 40% 50%"><img src="screenshots/meeting.webp" width="2000" height="1250" alt="A Quorum meeting about a reusable cup program, with replies from Product Lead, Designer, Operations and Finance beside the list of who is in the room"></div>
+    </div>
+  </section>
+
+  <section class="scene relay" data-scene="relay" id="build">
+    <div class="pin">
+      <h2>Then they build.</h2>
+      <ol class="order" id="order" aria-label="Speaking order">
+        <li style="--c: var(--lead)">Product</li>
+        <li style="--c: var(--design)">UI/UX design</li>
+        <li style="--c: var(--host)">Engineering</li>
+        <li style="--c: var(--ops)">Security</li>
+        <li style="--c: var(--finance)">Project manager</li>
+      </ol>
+      <p class="again" id="again"><span>and round again</span></p>
+      <ol class="features">
+        <li style="--c: var(--lead)" class="on">
+          <div><h3>Agents speak in order</h3><p><span>Each stage builds on the one before. Other specialists speak just ahead of the project manager.</span></p></div>
+          <figure style="--at: 100% 50%"><img src="screenshots/order.webp" width="2000" height="1250" loading="lazy" alt="A meeting about a coffee cart website: each agent in the room is numbered by stage, Product Manager marked as speaking next, beside a reply with a live page preview"></figure>
+        </li>
+        <li style="--c: var(--host)">
+          <div><h3>Then you choose</h3><p><span>After a full round: get a prompt for Claude, build it here, or go round again.</span></p></div>
+          <figure style="--at: 47% 50%"><img src="screenshots/next.webp" width="2000" height="1250" loading="lazy" alt="The What next card with three buttons: Get a prompt for Claude, Build it here and Another round, above a connected repository"></figure>
+        </li>
+        <li style="--c: var(--design)">
+          <div><h3>Take a prompt to Claude</h3><p><span>One agent’s model writes it, and Quorum appends the proposed files up to a size limit. Read it, then copy or download it.</span></p></div>
+          <figure><img src="screenshots/prompt.webp" width="2000" height="1250" loading="lazy" alt="A prompt for Claude written by the Developer agent, with Copy, Download and Write again buttons"></figure>
+        </li>
+        <li style="--c: var(--ops)">
+          <div><h3>Or build it here</h3><p><span>One pass by the room: design, code, a security review and a summary. Save the files to a folder, or push them.</span></p></div>
+          <figure style="--at: 47% 50%"><img src="screenshots/build.webp" width="2000" height="1250" loading="lazy" alt="A build result with two design previews, three files, and buttons to save to a folder or push to GitHub"></figure>
+        </li>
+        <li style="--c: var(--finance)">
+          <div><h3>See the design live</h3><p><span>Web pages and SVG drawings preview at desktop or phone width. Scripts stay off and nothing loads from the network.</span></p></div>
+          <figure><img src="screenshots/preview.webp" width="2000" height="1250" loading="lazy" alt="A full-size preview of the drafted coffee cart page, with a switch between desktop and phone widths"></figure>
+        </li>
+      </ol>
+      <p class="standin">Real model replies. acme/site is a local stand&#8209;in: nothing was sent to GitHub.</p>
+      <div class="rail" data-rail="relay" data-next="#made" data-noun="step"></div>
+    </div>
+  </section>
+
+  <section class="chapter dark" id="made">
+    <h2>Four agents made this.</h2>
+    <p>A Product Manager, a Designer, a Developer and a CISO took one goal round the room and wrote a page for a coffee cart.</p>
+    <figure style="--c: var(--lead)"><img src="screenshots/built-site.webp" width="1600" height="1000" loading="lazy" alt="The drafted one-page site for Corner Cup, a coffee cart: a draft banner, weekday hours, an address placeholder, three buttons and a menu with sample prices"></figure>
+    <p class="note">It is a draft and says so itself: sample prices and a placeholder address. File work needs a capable model; a small local one may not produce usable files.</p>
+  </section>
+
+  <section class="chapter dark" id="github">
+    <h2>Commits as they write.</h2>
+    <p>Connect a meeting to a GitHub repository with an access key. Automatic commits start switched on: each reply that adds or changes files is committed at once, during a build too, without you reviewing it first.</p>
+    <div class="routes">
+      <article class="route">
+        <span class="tag">The default</span>
+        <h3>A new branch and a pull request</h3>
+        <p class="path">quorum/your-goal-id</p>
+        <p>One branch for the meeting. Later commits move it forward, never by force. The default branch is not changed.</p>
+      </article>
+      <article class="route direct">
+        <span class="tag">Off unless you turn it on</span>
+        <h3>Straight to the default branch</h3>
+        <p class="path">your-default-branch</p>
+        <p>You confirm the repository and branch, with a key typed into the page. Nobody reviews these commits: they are live at once.</p>
+      </article>
+    </div>
+    <div class="proof">
+      <div>
+        <figure><img src="screenshots/connect.webp" width="2000" height="1250" loading="lazy" alt="The window for connecting the stand-in repository acme/site, listing what connecting allows, with a new branch and pull request selected"></figure>
+        <p>Connecting spells out what it allows.</p>
+      </div>
+      <div>
+        <figure style="--at: 47% 50%"><img src="screenshots/key.webp" width="2000" height="1250" loading="lazy" alt="The meeting chat asking for a GitHub access key, with buttons to commit now, create a key on GitHub, or not now"></figure>
+        <p>The chat asks for a key when it needs one.</p>
+      </div>
+    </div>
+    <p class="note">Screens from one run with real model replies. The repository acme/site is a local stand&#8209;in: nothing was sent to GitHub. The pull request number on screen is not a real one.</p>
+    <div class="bento facts">
+      <article class="tile"><h3>Your key stays in the page</h3><p>Held in the open page’s memory, never in browser storage or the database. Your local server uses it for each GitHub request. Reloading forgets it.</p></article>
+      <article class="tile"><h3>Workflows may run first</h3><p>A repository’s workflows can run on these commits, with their secrets, before you have read them. Connect only where that is acceptable.</p></article>
+      <article class="tile"><h3>Existing files are guarded</h3><p>An automatic commit replaces one only if the meeting has seen its current contents, or you approve it. Nothing is deleted or renamed.</p></article>
+      <article class="tile"><h3>Or press the buttons yourself</h3><p>Unconnected, files reach a folder or GitHub only when you choose Save to folder or Push to GitHub. A push opens a pull request.</p></article>
     </div>
   </section>
 
   <section class="scene reel" data-scene="reel" id="features">
     <div class="pin">
+      <h2 class="sr">More in the room</h2>
       <ol class="features">
         <li style="--c: var(--host)" class="on">
-          <div><h3>Invite the right people</h3><p><span>Write a goal, filter 22 ready-made specialists by group and bring up to 12 into the room.</span></p></div>
-          <figure><img src="screenshots/setup.webp" width="2000" height="1250" loading="lazy" alt="Starting a meeting with four product agents selected"></figure>
+          <div><h3>Invite the right people</h3><p><span>Filter 22 ready-made specialists by group and bring up to 12 into the room, or invite the product team in one click.</span></p></div>
+          <figure style="--at: 45% 50%"><img src="screenshots/setup.webp" width="2000" height="1250" loading="lazy" alt="Starting a meeting with four product agents selected"></figure>
         </li>
         <li style="--c: var(--design)">
-          <div><h3>Point with @</h3><p><span>Type @ and pick a name. Tagged agents answer first, in the order you named them.</span></p></div>
-          <figure><img src="screenshots/mention.webp" width="2000" height="1250" loading="lazy" alt="The list of agents that opens after typing @ in the message box"></figure>
+          <div><h3>Point with @</h3><p><span>Type @ and pick a name. Tagged agents answer in the order you named them, then the room pauses.</span></p></div>
+          <figure style="--at: 30% 60%"><img src="screenshots/mention.webp" width="2000" height="1250" loading="lazy" alt="The list of agents that opens after typing @ in the message box"></figure>
         </li>
         <li style="--c: var(--ops)">
-          <div><h3>Change the room mid-flight</h3><p><span>Add or remove an agent while the discussion runs. Newcomers read what they missed.</span></p></div>
+          <div><h3>Change the room mid-flight</h3><p><span>Add or remove an agent while the discussion runs. A newcomer sees the recent conversation and joins the order.</span></p></div>
           <figure><img src="screenshots/join.webp" width="2000" height="1250" loading="lazy" alt="The window for adding another agent to a meeting"></figure>
         </li>
         <li style="--c: var(--lead)">
-          <div><h3>Talk it out</h3><p><span>Push to talk, check the transcript, send it. Replies come back in each agent's own voice.</span></p></div>
+          <div><h3>Talk it out</h3><p><span>Push to talk, check the transcript, send it. With Kokoro, each agent replies in a voice of its own.</span></p></div>
           <figure><img src="screenshots/voice.webp" width="2000" height="1250" loading="lazy" alt="Voice mode with a tile for each agent and one highlighted as speaking"></figure>
         </li>
         <li style="--c: var(--finance)">
@@ -370,10 +560,10 @@ footer { padding: 40px var(--pad) 56px; border-top: 1px solid #ffffff14; color: 
 
   <section class="scene sideways" data-scene="sideways" id="gallery">
     <div class="pin">
-      <h2>Midnight, noon, or in your pocket.</h2>
+      <h2>Midnight, noon, or narrow.</h2>
       <div class="track" id="track">
-        <figure><img src="screenshots/team.webp" width="2000" height="1250" loading="lazy" alt="The agent library filtered to one group"><figcaption>Your team, searchable and grouped.</figcaption></figure>
-        <figure><img src="screenshots/light.webp" width="2000" height="1250" loading="lazy" alt="The meeting room in light mode"><figcaption>Dark by default. Light when you want it.</figcaption></figure>
+        <figure style="--at: 55% 50%"><img src="screenshots/team.webp" width="2000" height="1250" loading="lazy" alt="The agent library filtered to one group"><figcaption>Your team, searchable and grouped.</figcaption></figure>
+        <figure style="--at: 42% 50%"><img src="screenshots/light.webp" width="2000" height="1250" loading="lazy" alt="The meeting room in light mode"><figcaption>Dark by default. Light when you want it.</figcaption></figure>
         <figure class="tall"><img src="screenshots/phone.webp" width="780" height="1688" loading="lazy" alt="A meeting transcript on a phone-sized screen"><figcaption>Comfortable on a narrow screen.</figcaption></figure>
       </div>
       <div class="rail" data-rail="sideways" data-next="#local" data-noun="screen"></div>
@@ -384,7 +574,7 @@ footer { padding: 40px var(--pad) 56px; border-top: 1px solid #ffffff14; color: 
     <h2>Bring your own brains.</h2>
     <p>Mix models in one room, and swap any of them in the middle of a meeting.</p>
     <div class="bento">
-      <article class="tile half night"><span class="big">Local</span><h3>Ollama and llama.cpp</h3><p>Open models answer on your own machine. Nothing in those turns leaves it.</p></article>
+      <article class="tile half night"><span class="big">Local</span><h3>Ollama and llama.cpp</h3><p>Open models answer on your own machine, so those turns go to no model provider. GitHub gets files only if you push or connect it.</p></article>
       <article class="tile half spectrum"><span class="big" data-count="26">26</span><h3>Neural voices</h3><p>Kokoro speaks every agent differently, on your computer. It needs a local image with the model.</p></article>
       <article class="tile quarter"><span class="big" data-count="22">22</span><h3>Specialists</h3><p>Ready to invite, in four groups.</p></article>
       <article class="tile quarter"><span class="big" data-count="242">242</span><h3>Skills</h3><p>Included, with their licenses.</p></article>
@@ -401,18 +591,18 @@ footer { padding: 40px var(--pad) 56px; border-top: 1px solid #ffffff14; color: 
     <p>With Docker running, this starts Quorum with a local model.</p>
     <div class="terminal">
       <header><span>Terminal</span><button class="button glass small" type="button" id="copy">Copy commands</button></header>
-      <pre><code id="commands">git clone https://github.com/PerDiemInc/Quorum.git &amp;&amp; cd Quorum
-docker compose up -d --build
-docker compose exec ollama ollama pull qwen2.5:3b
-open http://127.0.0.1:4710</code></pre>
+      <pre><code id="commands"><span>git clone https://github.com/PerDiemInc/Quorum.git &amp;&amp; cd Quorum
+</span><span>docker compose up -d --build
+</span><span>docker compose exec ollama ollama pull qwen2.5:3b
+</span><span>open http://127.0.0.1:4710</span></code></pre>
     </div>
-    <p class="fine">To use your Claude Code or Codex logins and the natural voices, run the server natively with Node 24. The README explains how.</p>
+    <p class="fine">For your Claude Code or Codex login, run the server natively with Node 24 or use the Mac bridge. Natural voices also need a local Kokoro image. In Docker, saved files stay in the app’s volume. The README explains each.</p>
     <div class="actions"><a class="button solid" href="https://github.com/PerDiemInc/Quorum#readme">Read the README</a></div>
   </section>
 </main>
 
 <footer>
-  <p>Quorum is MIT licensed. Screenshots and audio show a made-up demo meeting with real model replies and synthetic voices.</p>
+  <p>Quorum is MIT licensed. Screenshots and audio show made-up demo meetings with real model replies and synthetic voices. The repository acme/site is a local stand&#8209;in: nothing was sent to GitHub, and no pull request shown here is real.</p>
   <button class="switch" type="button" data-motion>Turn off animation</button>
 </footer>
 
@@ -446,6 +636,7 @@ function ease(name, target) {
   return (eased[name] = next);
 }
 
+const narrow = matchMedia("(max-width: 900px)");
 // ---- The meeting ----
 const meet = scenes.meet;
 const seats = [...document.querySelectorAll(".seat")];
@@ -573,9 +764,11 @@ $("hear").addEventListener("click", (event) => {
 });
 
 // ---- Where you are, and the way on ----
+/** The scenes that show one step at a time: its words and its screen. */
+const STACKS = ["relay", "reel"].map((name) => ({ name, items: [...scenes[name].querySelectorAll(".features > li")] }));
 const STEPS = {
   meet: ["You", "Product Lead", "Designer", "Operations", "Finance"],
-  reel: [...document.querySelectorAll(".features h3")].map((h) => h.textContent.trim()),
+  ...Object.fromEntries(STACKS.map(({ name, items }) => [name, items.map((li) => li.querySelector("h3").textContent.trim())])),
   sideways: [...document.querySelectorAll(".track figcaption")].map((c) => c.textContent.trim()),
 };
 /** Where in a scene's scrolling each step sits, from 0 to 1. */
@@ -623,20 +816,28 @@ function mark(name, index) {
   const text = (name === "meet" && playing !== null ? "Playing " : noun[0].toUpperCase() + noun.slice(1) + " ") + (index + 1) + " of " + STEPS[name].length;
   if (rail.where.textContent !== text) rail.where.textContent = text;
 }
-// Feature names are the quickest way to a feature.
-document.querySelectorAll(".features h3").forEach((heading, i) => {
-  if (!motion) return;
-  const jump = document.createElement("button");
-  jump.type = "button";
-  jump.className = "jump";
-  jump.textContent = heading.textContent;
-  jump.addEventListener("click", () => goTo("reel", i));
-  heading.replaceChildren(jump);
-});
+// A step's name is the quickest way to it.
+for (const { name, items } of STACKS) {
+  items.forEach((item, i) => {
+    if (!motion) return;
+    const heading = item.querySelector("h3");
+    const jump = document.createElement("button");
+    jump.type = "button";
+    jump.className = "jump";
+    jump.textContent = heading.textContent;
+    jump.addEventListener("click", () => goTo(name, i));
+    // On a narrow screen the other names are out of sight, so reaching one by keyboard shows it.
+    // It waits a frame, so the browser's own scrolling to the focused name comes first.
+    jump.addEventListener("focus", () => requestAnimationFrame(() => {
+      if (narrow.matches && jump.matches(":focus-visible") && !item.classList.contains("on")) goTo(name, i);
+    }));
+    heading.replaceChildren(jump);
+  });
+}
 const links = [...document.querySelectorAll("nav ul a")];
 /** The section under the top bar owns the highlighted link. */
 function markSection() {
-  const parts = [["meeting", "#meeting"], ["shot", "#features"], ["features", "#features"], ["gallery", "#features"], ["local", "#local"], ["start", "#start"]];
+  const parts = [["meeting", "#meeting"], ["build", "#build"], ["made", "#build"], ["github", "#build"], ["features", "#features"], ["gallery", "#features"], ["local", "#local"], ["start", "#start"]];
   let current = "";
   for (const [id, href] of parts) if ($(id).getBoundingClientRect().top <= innerHeight * 0.45) current = href;
   // The last section can be too short to reach that line.
@@ -658,8 +859,21 @@ for (const button of document.querySelectorAll("[data-motion]")) {
 
 // ---- The other scenes ----
 const words = [...document.querySelectorAll("h1 span")];
-const narrow = matchMedia("(max-width: 900px)");
 const heroExtras = [...scenes.hero.querySelectorAll(".lede, .actions, .tools")];
+/** Keep the ring's thin line away from the headline, wherever the layout has put it. */
+function clearHeadline() {
+  const halo = $("halo"), title = document.querySelector("h1");
+  const tilt = ((narrow.matches ? 44 : 59) * Math.PI) / 180, depth = 1400;
+  const size = halo.offsetWidth * 0.68 + 56;
+  /** Where a height on screen falls on the tilted ring, as a share of its box. */
+  const onRing = (y) => {
+    const local = (y * depth) / (Math.cos(tilt) * depth + y * Math.sin(tilt));
+    return (50 + (local / size) * 100).toFixed(1) + "%";
+  };
+  const top = title.offsetTop - halo.offsetTop, bottom = top + title.offsetHeight;
+  halo.style.setProperty("--clear-from", onRing(top - 6));
+  halo.style.setProperty("--clear-to", onRing(bottom + 10));
+}
 function updateHero() {
   // The flight carries on while the hero scrolls away, so the screen is never left empty.
   const box = scenes.hero.getBoundingClientRect(), view = innerHeight - BAR;
@@ -670,21 +884,23 @@ function updateHero() {
   halo.style.setProperty("--tilt", rest - (rest - 22) * p + "deg");
   halo.style.setProperty("--zoom", 1 + p * 0.62);
   scenes.hero.style.setProperty("--veil", clamp((p - 0.08) / 0.22));
-  // The three words fly past the reader.
+  // The three words fly past the reader. On a narrow screen they leave upwards, clear of the text below.
   words.forEach((word, i) => {
-    word.style.transform = `translate(${(i - 1) * p * 38}vw, ${(i === 1 ? -1 : 1) * p * 14}vh) scale(${1 + p * 1.5})`;
-    word.style.opacity = 1 - clamp((p - 0.4) / 0.5);
+    const rise = narrow.matches ? [-30, -34, -12][i] : (i === 1 ? -14 : 14);
+    word.style.transform = `translate(${(i - 1) * p * 38}vw, ${p * rise}vh) scale(${1 + p * (narrow.matches ? 0.9 : 1.5)})`;
+    word.style.opacity = 1 - clamp((p - (narrow.matches ? 0.2 : 0.4)) / 0.5);
   });
+  // The text below sinks away from the growing words.
   heroExtras.forEach((el) => {
-    el.style.opacity = 1 - clamp(p / 0.16);
-    el.style.transform = `translateY(${-p * 90}px)`;
-    el.style.visibility = p > 0.16 ? "hidden" : "visible";
+    el.style.opacity = 1 - clamp(p / 0.09);
+    el.style.transform = `translateY(${p * 260}px)`;
+    el.style.visibility = p > 0.09 ? "hidden" : "visible";
   });
 }
 // A scene fades up as it arrives and steps back as the next one takes its place.
 const pins = Object.entries(scenes).map(([name, scene]) => ({ name, scene, pin: scene.querySelector(".pin") }));
 // Scenes whose pictures reach the edge of the screen only fade; shrinking them would show the cut.
-const recedes = new Set(["meet", "lift", "reel"]);
+const recedes = new Set(["meet", "lift", "relay", "reel"]);
 function updateDepth() {
   const view = innerHeight - BAR;
   for (const { name, scene, pin } of pins) {
@@ -706,16 +922,36 @@ function updateLift() {
   shot.style.setProperty("--rise", (1 - eased) * 18 + "vh");
   shot.style.setProperty("--sheen", 110 - q * 220 + "%");
 }
-const steps = [...document.querySelectorAll(".features > li")];
-function updateReel() {
-  const index = Math.floor(clamp(progressOf(scenes.reel) * steps.length, 0, steps.length - 0.001));
-  steps.forEach((step, i) => {
-    step.classList.toggle("on", i === index);
-    step.classList.toggle("done", i < index);
-  });
-  // The rail takes the color of the feature on show.
-  rails.reel?.rail.style.setProperty("--speaker", steps[index].style.getPropertyValue("--c"));
-  mark("reel", index);
+const stages = [...$("order").children];
+/** Light the speaking order for a step of the story: the stage at work, and those that have spoken. */
+function lightOrder(step, within) {
+  // Which stages have had their turn, and which has the floor (-1 for none).
+  let done = 5, now = -1, from = 0;
+  if (step === 0) {
+    // The first round passes along the track, then loops back.
+    done = now = Math.floor(within * 6);
+    if (now > 4) now = -1;
+  } else if (step === 2) now = 2;
+  else if (step === 3) {
+    // A build pass starts at design and ends with the project manager's summary.
+    from = 1;
+    done = now = 1 + Math.min(3, Math.floor(within * 4));
+  } else if (step === 4) now = 1;
+  stages.forEach((stage, i) => (stage.dataset.state = i === now ? "now" : i >= from && i < done ? "spoken" : "idle"));
+  $("again").classList.toggle("lit", step === 1 || (step === 0 && done > 4));
+}
+function updateStacks() {
+  for (const { name, items } of STACKS) {
+    const place = clamp(progressOf(scenes[name]) * items.length, 0, items.length - 0.001), index = Math.floor(place);
+    items.forEach((item, i) => {
+      item.classList.toggle("on", i === index);
+      item.classList.toggle("done", i < index);
+    });
+    // The rail takes the color of the step on show.
+    rails[name]?.rail.style.setProperty("--speaker", items[index].style.getPropertyValue("--c"));
+    mark(name, index);
+    if (name === "relay") lightOrder(index, place - index);
+  }
 }
 function updateSideways() {
   const track = $("track");
@@ -744,13 +980,19 @@ function frame(now) {
   updateDepth();
   updateHero();
   updateLift();
-  updateReel();
+  updateStacks();
   updateSideways();
   const speaking = updateMeeting();
   if (speaking || gliding) schedule();
 }
 addEventListener("scroll", schedule, { passive: true });
-addEventListener("resize", schedule);
+addEventListener("resize", () => {
+  clearHeadline();
+  schedule();
+});
+clearHeadline();
+// The headline's size settles once its typeface has arrived.
+document.fonts?.ready.then(clearHeadline);
 
 if (motion && "IntersectionObserver" in window) {
   // Sections below the scenes settle into place as they arrive.
@@ -763,7 +1005,7 @@ if (motion && "IntersectionObserver" in window) {
       setTimeout(() => target.classList.remove("rise", "in"), 2400);
     }
   }, { threshold: 0.12 });
-  document.querySelectorAll(".chapter > h2, .chapter > p, .tile, .terminal, .chapter > .actions").forEach((el) => {
+  document.querySelectorAll(".chapter > h2, .chapter > p, .chapter > figure, .route, .proof > div, .tile, .terminal, .chapter > .actions").forEach((el) => {
     const row = el.classList.contains("tile") ? [...el.parentNode.children].filter((tile) => tile.offsetTop === el.offsetTop).indexOf(el) : 0;
     el.style.setProperty("--wait", row * 0.08 + "s");
     el.classList.add("rise");
